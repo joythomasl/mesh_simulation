@@ -39,7 +39,7 @@
     if (!(to in prev)) return null; const path = []; for (let v = to; v != null; v = prev[v]) path.unshift(v); return path;
   }
   function reachable(from) { const seen = new Set([from]), q = [from]; while (q.length) { const u = q.shift(); neighbors(u).forEach(v => { if (!seen.has(v)) { seen.add(v); q.push(v); } }); } return seen; }
-  function log(msg, cls) { E.log.unshift({ t: E.t, msg, cls: cls || "" }); if (E.log.length > 200) E.log.length = 200; logDirty = true; }
+  function log(msg, cls, at) { E.log.unshift({ t: E.t, msg, cls: cls || "" }); if (E.log.length > 200) E.log.length = 200; logDirty = true; if (at) say(at, msg.length > 90 ? msg.slice(0, 88) + "…" : msg, cls); }
   function after(ms, fn) { E.timers.push({ at: E.t + ms, fn }); }
   function hint(t) { $("hint").textContent = t || ""; }
   function fmtT(ms) { return (ms / 1000).toFixed(1) + " s"; }
@@ -48,6 +48,33 @@
   function segIntersect(a, b, c, d) { const o = (p, q, r) => Math.sign((q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y)); return o(a, b, c) !== o(a, b, d) && o(c, d, a) !== o(c, d, b) && o(a, b, c) !== 0 && o(c, d, a) !== 0; }
   function segDist(p, a, b) { const dx = b.x - a.x, dy = b.y - a.y; const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1))); return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy)); }
   const UI = { drag: null, hover: null, tool: "move", pt: null };
+  // Speech bubbles: a short line above the node it concerns, so the story
+  // can be followed on the picture itself (not only in the log).
+  E.bubbles = [];
+  // Bubble lifetimes are in real seconds (not simulated), so they stay readable at 20× too.
+  const realNow = () => performance.now();
+  function say(id, text, cls, ttl) { const n = byId[id]; if (!n) return; E.bubbles = E.bubbles.filter(b => b.node !== id); E.bubbles.push({ node: id, text, cls: cls || "", born: realNow(), ttl: ttl || 4200 }); if (E.bubbles.length > 10) E.bubbles.shift(); }
+  function sayAt(x, y, text, cls, ttl) { E.bubbles.push({ x, y, text, cls: cls || "", born: realNow(), ttl: ttl || 4200 }); if (E.bubbles.length > 10) E.bubbles.shift(); }
+  function wrapText(ctx, text, max) { const words = text.split(" "), lines = []; let cur = ""; words.forEach(w => { const t = cur ? cur + " " + w : w; if (ctx.measureText(t).width > max && cur) { lines.push(cur); cur = w; } else cur = t; }); if (cur) lines.push(cur); return lines; }
+  function drawBubbles() {
+    const rn = realNow(); E.bubbles = E.bubbles.filter(b => rn - b.born < b.ttl);
+    const paper = css("--paper"), ink = css("--ink");
+    E.bubbles.forEach(b => {
+      const n = b.node ? byId[b.node] : null; if (b.node && !n) return;
+      const x = n ? n.x : b.x, top = n ? n.y - n.r - (n.badge ? 30 : 12) : b.y;
+      const age = rn - b.born; const alpha = age > b.ttl - 500 ? (b.ttl - age) / 500 : Math.min(1, age / 150);
+      ctx.save(); ctx.globalAlpha = Math.max(0, alpha);
+      ctx.font = "600 11px Inter, sans-serif"; const lines = wrapText(ctx, b.text, 210); const lw = Math.max(...lines.map(l => ctx.measureText(l).width));
+      const w = lw + 18, h = lines.length * 14 + 12; let bx = x - w / 2; bx = Math.max(6, Math.min(W - w - 6, bx)); const by = top - h - 10;
+      const col = b.cls === "bad" ? css("--red") : b.cls === "warn" ? css("--amber") : b.cls === "ok" ? css("--green") : b.cls === "info" ? css("--blue") : css("--gold");
+      ctx.shadowColor = "rgba(0,0,0,.25)"; ctx.shadowBlur = 8; ctx.fillStyle = paper; ctx.beginPath(); ctx.roundRect(bx, by, w, h, 8); ctx.fill(); ctx.shadowBlur = 0;
+      ctx.beginPath(); ctx.moveTo(x - 6, by + h); ctx.lineTo(x, by + h + 7); ctx.lineTo(x + 6, by + h); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.roundRect(bx, by, w, h, 8); ctx.stroke();
+      ctx.fillStyle = col; ctx.fillRect(bx, by + 6, 3, h - 12);
+      ctx.fillStyle = ink; ctx.textAlign = "left"; lines.forEach((l, i) => ctx.fillText(l, bx + 12, by + 16 + i * 14));
+      ctx.restore();
+    });
+  }
   function revive(id) { const n = byId[id]; if (n) n.alive = true; }
   function ring(cx, cy, n, r) { const out = []; for (let i = 0; i < n; i++) { const a = -Math.PI / 2 + i * 2 * Math.PI / n; out.push([cx + Math.cos(a) * r * (i % 2 ? 1 : .78), cy + Math.sin(a) * r * (i % 2 ? .82 : 1)]); } return out; }
   function meshByRange(ids, range, kind) { for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) { const a = byId[ids[i]], b = byId[ids[j]]; if (Math.hypot(a.x - b.x, a.y - b.y) < range) link(ids[i], ids[j], kind || "wifi"); } }
@@ -110,6 +137,7 @@
       if (n.sub) { ctx.fillStyle = ink2; ctx.font = "500 10px JetBrains Mono, monospace"; ctx.textAlign = "center"; ctx.fillText(n.sub, n.x, n.y + n.r + 26); }
     });
     if (E.sc && E.sc.drawOver) E.sc.drawOver(ctx);
+    drawBubbles();
   }
 
   // ---------------- Loop ----------------
@@ -129,7 +157,7 @@
       const due = E.timers.filter(t => t.at <= E.t); E.timers = E.timers.filter(t => t.at > E.t); due.forEach(t => t.fn());
       if (E.sc.tick) E.sc.tick(dt);
       metricT += real; if (metricT > 250) { metricT = 0; renderMetrics(); $("clock").textContent = "t = " + fmtT(E.t); }
-      if (autoRun && E.step < E.sc.steps.length - 1 && E.t - stepAt > (E.sc.stepGap || 6000)) nextStep();
+      if (autoRun && E.step < E.sc.steps.length - 1 && performance.now() - stepAt > (E.sc.stepGap || 9000)) nextStep();
     }
   }
 
@@ -175,9 +203,9 @@
     $("narr").innerHTML = E.step < 0 ? E.sc.intro : E.sc.steps[E.step].text;
     $("btn-next").disabled = E.step >= E.sc.steps.length - 1; $("btn-next").textContent = E.step < 0 ? "Start →" : E.step >= E.sc.steps.length - 1 ? "Finished" : "Next →";
   }
-  function nextStep() { if (E.step >= E.sc.steps.length - 1) return; E.step++; stepAt = E.t; const s = E.sc.steps[E.step]; if (s.run) s.run(); renderSteps(); renderMetrics(); }
+  function nextStep() { if (E.step >= E.sc.steps.length - 1) return; E.step++; stepAt = performance.now(); const s = E.sc.steps[E.step]; if (s.run) s.run(); renderSteps(); renderMetrics(); }
   function load(sc) {
-    E.nodes.length = 0; E.links.length = 0; E.packets.length = 0; E.log.length = 0; E.timers.length = 0; E.t = 0; E.stats = {}; E.C = {}; E.step = -1; stepAt = 0;
+    E.nodes.length = 0; E.links.length = 0; E.packets.length = 0; E.log.length = 0; E.timers.length = 0; E.bubbles.length = 0; E.t = 0; E.stats = {}; E.C = {}; E.step = -1; stepAt = 0;
     for (const k in byId) delete byId[k];
     E.sc = sc; hint(sc.hint || "");
     $("sc-tier").textContent = sc.tier; $("sc-title").textContent = sc.title; $("sc-blurb").textContent = sc.blurb;
@@ -214,7 +242,7 @@
       { id: "acts", type: "buttons", buttons: [{ id: "clearWalls", label: "Clear walls" }, { id: "layout", label: "Reset layout" }] }
     ],
     st: {}, setup() {
-      const s = this.st; Object.assign(s, { walls: [], draft: null, pending: null, sent: 0, failed: 0, path: null, pathAt: 0, n: 0, acc: 0, groups: 1, pairs: 0 });
+      const s = this.st; Object.assign(s, { walls: [], draft: null, pending: null, sent: 0, failed: 0, path: null, pathAt: 0, n: 0, acc: 0, groups: 1, pairs: 0, lastSay: {}, linkKeys: null });
       [["P1", 120, 220], ["P2", 210, 320], ["P3", 140, 420], ["P4", 340, 300], ["P5", 620, 300], ["P6", 740, 220], ["P7", 750, 390], ["P8", 850, 310]].forEach(p => node(p[0], p[1], p[2], "phone", p[0]));
       s.n = 8; this.rebuild();
     },
@@ -225,9 +253,11 @@
       const s = this.st; E.links.length = 0; const ns = E.nodes;
       for (let i = 0; i < ns.length; i++) for (let j = i + 1; j < ns.length; j++) {
         const a = ns[i], b = ns[j]; const d = Math.hypot(a.x - b.x, a.y - b.y); const wall = this.blocked(a, b);
+        // phones are at ground level: a wall between two phones cuts the link
         if (a.kind === "phone" && b.kind === "phone") { if (d < E.C.wifi && !wall) link(a.id, b.id, "wifi", { q: 1 - d / E.C.wifi }); }
+        // relay boxes sit up high (mast / roof), so their links reach over a wall — at reduced distance
         else if (a.kind === "esp" && b.kind === "esp") { const R = wall ? E.C.lora * .6 : E.C.lora; if (d < R) link(a.id, b.id, "lora", { delay: 700, label: wall ? "over the wall" : "" }); }
-        else { if (d < E.C.attach && !wall) link(a.id, b.id, "wifi", { delay: 60, q: 1 - d / E.C.attach }); }   // phone ↔ relay: the phone connects to the box's hotspot
+        else { const R = wall ? E.C.attach * .7 : E.C.attach; if (d < R) link(a.id, b.id, "wifi", { delay: 60, q: 1 - d / R, label: wall ? "over the wall" : "" }); }
       }
       // connected groups + share of phone pairs that can talk
       const phones = ns.filter(n => n.kind === "phone"); let pairs = 0, ok = 0; const seen = new Set(); let groups = 0;
@@ -236,30 +266,38 @@
       s.groups = groups; s.pairs = pairs ? Math.round(ok / pairs * 100) : 100;
       E.nodes.forEach(n => { if (n.kind === "esp") { const ph = neighbors(n.id).filter(x => byId[x].kind === "phone").length; n.sub = ph ? ph + " phone" + (ph > 1 ? "s" : "") + " connected" : "no phone in reach"; } });
     },
-    onMove() { this.rebuild(); },
+    announce() { // compare links before/after a user action and say what changed
+      const s = this.st; const key = l => [l.a, l.b].sort().join("|"); const now = new Set(E.links.map(key)); const before = s.linkKeys || new Set();
+      const lost = [...before].filter(k => !now.has(k)), got = [...now].filter(k => !before.has(k));
+      lost.slice(0, 2).forEach(k => { const [a, b] = k.split("|"); const who = UI.drag && (UI.drag.node.id === a || UI.drag.node.id === b) ? UI.drag.node.id : a; const other = who === a ? b : a; if (E.t - (s.lastSay[k] || -9e9) > 2500) { s.lastSay[k] = E.t; say(who, "lost link to " + other + " — too far, or a wall is in the way", "bad", 2600); } });
+      got.slice(0, 2).forEach(k => { const [a, b] = k.split("|"); const who = UI.drag && (UI.drag.node.id === a || UI.drag.node.id === b) ? UI.drag.node.id : a; const other = who === a ? b : a; if (E.t - (s.lastSay[k] || -9e9) > 2500) { s.lastSay[k] = E.t; say(who, "linked to " + other + (byId[other] && byId[other].kind === "esp" || byId[who] && byId[who].kind === "esp" ? " (relay box)" : ""), "ok", 2600); } });
+      s.linkKeys = now;
+    },
+    onMove() { this.rebuild(); this.announce(); },
     onControl(id) { const s = this.st; if (id === "clearWalls") { s.walls = []; log("Walls cleared", "sys"); } if (id === "layout") { const keep = E.C; load(this); Object.assign(E.C, keep); return; } this.rebuild(); },
     onPointerDown(pt, n, tool) {
       const s = this.st;
-      if (tool === "phone" && !n) { const id = "P" + (++s.n); node(id, pt.x, pt.y, "phone", id); log("Added phone " + id, "ok"); this.rebuild(); }
-      if (tool === "esp" && !n) { const id = "L" + (++s.n); node(id, pt.x, pt.y, "esp", id + " · relay"); log("Dropped relay box " + id + " — phones within " + E.C.attach + " m connect to it; it reaches other boxes over LoRa up to " + E.C.lora + " m", "ok"); this.rebuild(); }
+      if (tool === "phone" && !n) { const id = "P" + (++s.n); node(id, pt.x, pt.y, "phone", id); log("Added phone " + id, "ok"); this.rebuild(); const nb = neighbors(id).length; say(id, nb ? "new phone — linked to " + nb + " nearby" : "new phone — nobody in reach yet", nb ? "ok" : "warn"); s.linkKeys = new Set(E.links.map(l => [l.a, l.b].sort().join("|"))); }
+      if (tool === "esp" && !n) { const id = "L" + (++s.n); node(id, pt.x, pt.y, "esp", id + " · relay"); log("Dropped relay box " + id + " — phones within " + E.C.attach + " m connect to it; it reaches other boxes over LoRa up to " + E.C.lora + " m", "ok"); this.rebuild(); const ph = neighbors(id).filter(x => byId[x].kind === "phone").length, lr = neighbors(id).filter(x => byId[x].kind === "esp").length; say(id, "relay box: " + (ph ? ph + " phone" + (ph > 1 ? "s" : "") + " connected" : "no phone in reach") + (lr ? " · LoRa to " + lr + " other box" + (lr > 1 ? "es" : "") : ""), ph ? "ok" : "warn"); s.linkKeys = new Set(E.links.map(l => [l.a, l.b].sort().join("|"))); }
       if (tool === "wall") s.draft = { x1: pt.x, y1: pt.y, x2: pt.x, y2: pt.y };
-      if (tool === "delete") { if (n) { removeNode(n.id); log("Removed " + n.id, "warn"); this.rebuild(); } else { const w = s.walls.find(w => segDist(pt, { x: w.x1, y: w.y1 }, { x: w.x2, y: w.y2 }) < 10); if (w) { s.walls.splice(s.walls.indexOf(w), 1); log("Wall removed", "warn"); this.rebuild(); } } }
+      if (tool === "delete") { if (n) { removeNode(n.id); log("Removed " + n.id, "warn"); this.rebuild(); s.linkKeys = new Set(E.links.map(l => [l.a, l.b].sort().join("|"))); } else { const w = s.walls.find(w => segDist(pt, { x: w.x1, y: w.y1 }, { x: w.x2, y: w.y2 }) < 10); if (w) { s.walls.splice(s.walls.indexOf(w), 1); log("Wall removed", "warn"); this.rebuild(); } } }
       if (tool === "send" && n && n.kind === "phone") this.onNodeClick(n);
     },
     onPointerMove(pt) { const s = this.st; if (s.draft) { s.draft.x2 = pt.x; s.draft.y2 = pt.y; } },
-    onPointerUp() { const s = this.st; if (s.draft) { if (Math.hypot(s.draft.x2 - s.draft.x1, s.draft.y2 - s.draft.y1) > 12) { s.walls.push(s.draft); log("Wall drawn — phone links through it are cut", "warn"); } s.draft = null; this.rebuild(); } },
+    onPointerUp() { const s = this.st; if (s.draft) { if (Math.hypot(s.draft.x2 - s.draft.x1, s.draft.y2 - s.draft.y1) > 12) { const w = s.draft; s.walls.push(w); const before = E.links.length; this.rebuild(); const cut = before - E.links.length; log("Wall drawn — phone links through it are cut; relay boxes still reach over it", "warn"); sayAt((w.x1 + w.x2) / 2, Math.min(w.y1, w.y2) - 4, cut > 0 ? "wall: " + cut + " phone link" + (cut > 1 ? "s" : "") + " cut — relay boxes still reach over it" : "wall — phone links can't cross it; relay boxes reach over it", "warn", 4000); s.linkKeys = new Set(E.links.map(l => [l.a, l.b].sort().join("|"))); } s.draft = null; this.rebuild(); } },
     onNodeClick(n) {
       const s = this.st; if (UI.tool !== "send" || n.kind !== "phone") return;
-      if (!s.pending) { s.pending = n; E.nodes.forEach(x => { x.ring = null; }); n.ring = css("--gold"); log("From " + n.id + " — now click the phone it should reach", "sys"); return; }
+      if (!s.pending) { s.pending = n; E.nodes.forEach(x => { x.ring = null; }); n.ring = css("--gold"); log("From " + n.id + " — now click the phone it should reach", "sys"); say(n.id, "sending from here — now click the phone it should reach", "sys"); return; }
       if (s.pending === n) return; this.sendMsg(s.pending, n); s.pending.ring = null; s.pending = null;
     },
     sendMsg(a, b) {
       const s = this.st; const path = bfs(a.id, b.id);
-      if (!path) { s.failed++; a.badge = "NO WAY THROUGH"; a.badgeColor = css("--red"); after(1800, () => { if (a.badge === "NO WAY THROUGH") a.badge = ""; }); log("No way from " + a.id + " to " + b.id + " — move a phone closer, or drop a relay in between", "bad"); return; }
+      if (!path) { s.failed++; a.badge = "NO WAY THROUGH"; a.badgeColor = css("--red"); after(1800, () => { if (a.badge === "NO WAY THROUGH") a.badge = ""; }); log("No way from " + a.id + " to " + b.id + " — move a phone closer, or drop a relay in between", "bad"); say(a.id, "can't reach " + b.id + " — no path. Move a phone closer or drop a relay box between", "bad", 4000); return; }
       s.path = path; s.pathAt = E.t;
       const back = path.slice().reverse();
-      const reply = i => { if (i >= back.length - 1) { s.sent++; log(b.id + " → " + a.id + " reply delivered — two-way link confirmed", "ok"); return; } send(back[i], back[i + 1], { color: css("--blue"), r: 5, label: i === 0 ? "reply" : "", onArrive: () => reply(i + 1) }); };
-      const hop = i => { if (i >= path.length - 1) { s.sent++; log(a.id + " → " + b.id + " delivered in " + (path.length - 1) + " hop" + (path.length > 2 ? "s" : "") + " via " + path.join(" → ") + " — sending reply", "ok"); after(300, () => reply(0)); return; } send(path[i], path[i + 1], { color: css("--gold"), r: 5, label: i === 0 ? "msg" : "", onArrive: () => hop(i + 1) }); }; hop(0);
+      say(a.id, "sending to " + b.id + " — " + (path.length - 1) + " hop" + (path.length > 2 ? "s" : "") + " via " + path.slice(1, -1).join(", ") + (path.length > 2 ? "" : "direct"), "sys", 2500);
+      const reply = i => { if (i >= back.length - 1) { s.sent++; log(b.id + " → " + a.id + " reply delivered — two-way link confirmed", "ok"); say(a.id, "reply received from " + b.id + " ✓ two-way link works", "ok", 3500); return; } if (i > 0) say(back[i], "passing the reply on →", "info", 1400); send(back[i], back[i + 1], { color: css("--blue"), r: 5, label: i === 0 ? "reply" : "", onArrive: () => reply(i + 1) }); };
+      const hop = i => { if (i >= path.length - 1) { s.sent++; log(a.id + " → " + b.id + " delivered in " + (path.length - 1) + " hop" + (path.length > 2 ? "s" : "") + " via " + path.join(" → ") + " — sending reply", "ok"); say(b.id, "got the message from " + a.id + " — sending a reply", "ok", 2500); after(300, () => reply(0)); return; } if (i > 0) say(path[i], byId[path[i]].kind === "esp" ? "relay box passing it on →" : "passing it on →", "info", 1400); send(path[i], path[i + 1], { color: css("--gold"), r: 5, label: i === 0 ? "msg" : "", onArrive: () => hop(i + 1) }); }; hop(0);
     },
     tick(dt) {
       const s = this.st; this.rebuild();
@@ -279,11 +317,11 @@
     metrics() { const s = this.st; const phones = E.nodes.filter(n => n.kind === "phone").length, relays = E.nodes.filter(n => n.kind === "esp").length; return [{ label: "phones", value: phones }, { label: "relay boxes", value: relays }, { label: "walls", value: s.walls.length }, { label: "links", value: E.links.length }, { label: "separate groups", value: s.groups, cls: s.groups > 1 ? "warn" : "good" }, { label: "phones that can reach each other", value: s.pairs + " %", cls: s.pairs === 100 ? "good" : s.pairs < 50 ? "bad" : "warn", bar: s.pairs, barCls: s.pairs === 100 ? "green" : "amber" }, { label: "messages delivered", value: s.sent }, { label: "messages with no way through", value: s.failed, cls: s.failed ? "warn" : "" }]; },
     steps: [
       { text: "<b>Two groups, one gap.</b> The phones on the left can talk to each other, and so can the ones on the right — but not across the gap. Try it: pick the <b>Send</b> tool and click P4, then P5. No way through.", run() { UI.tool = "send"; renderTools(); } },
-      { text: "<b>Drag a phone into the gap.</b> Pick <b>Move</b> and drag P4 to the middle. When it gets within reach of both sides, links appear on their own and the two groups become one.", run() { UI.tool = "move"; renderTools(); const p = byId.P4; if (p) { p.x = 480; p.y = 300; E.sc.rebuild(); log("P4 moved to the middle — it now bridges the two groups", "ok"); } } },
-      { text: "<b>Or drop one relay box in the gap.</b> A phone can't stay there forever. Pick <b>Relay</b> and click in the middle. Phones on both sides connect to the box (it runs a Wi-Fi hotspot), and messages go through it both ways — P4 can go back to its team. Watch the message from P1 to P8 and the reply coming back.", run() { const p = byId.P4; if (p) { p.x = 340; p.y = 300; } node("L1", 480, 300, "esp", "L1 · relay"); E.sc.rebuild(); log("One relay box in the gap — both sides connect to it", "ok"); after(1200, () => E.sc.sendMsg(byId.P1, byId.P8)); } },
-      { text: "<b>Wider gap? Two boxes talk over LoRa.</b> When the gap is wider than any hotspot can cover, put a box near each group. Each side's phones connect to their box, and the boxes talk to each other over LoRa — hundreds of metres. The right group has moved further away; the LoRa link holds.", run() { removeNode("L1"); node("L1", 400, 330, "esp", "L1 · relay"); node("L2", 700, 330, "esp", "L2 · relay"); ["P5", "P6", "P7", "P8"].forEach(id => { const n = byId[id]; if (n) n.x += 100; }); E.sc.rebuild(); log("Right group moved further away — L1 and L2 bridge it over LoRa", "ok"); after(1200, () => E.sc.sendMsg(byId.P3, byId.P6)); } },
-      { text: "<b>Now a wall.</b> Pick <b>Wall</b> and drag a line between two phones that are linked, say P1 and P2. Their link is cut — a collapsed building, a ridge. The LoRa link between the boxes is not cut: long-range radio reaches over it (a bit shorter).", run() { E.sc.st.walls.push({ x1: 190, y1: 200, x2: 110, y2: 300 }); E.sc.rebuild(); log("Wall drawn between P1 and P2 — P1 is cut off", "warn"); } },
-      { text: "<b>Bridge the wall.</b> Drop a relay on each side of the wall, close to a phone. The phones attach, the boxes talk over the wall, and P1 is back in. That is the whole idea: when phones can't reach, put a box in between or up high.", run() { node("L3", 90, 260, "esp", "L3 · relay"); node("L4", 250, 270, "esp", "L4 · relay"); E.sc.rebuild(); log("Relays on both sides of the wall — P1 reconnected over LoRa", "ok"); } },
+      { text: "<b>Drag a phone into the gap.</b> Pick <b>Move</b> and drag P4 to the middle. When it gets within reach of both sides, links appear on their own and the two groups become one.", run() { UI.tool = "move"; renderTools(); const p = byId.P4; if (p) { p.x = 480; p.y = 300; E.sc.rebuild(); log("P4 moved to the middle — it now bridges the two groups", "ok", "P4"); } } },
+      { text: "<b>Or drop one relay box in the gap.</b> A phone can't stay there forever. Pick <b>Relay</b> and click in the middle. Phones on both sides connect to the box (it runs a Wi-Fi hotspot), and messages go through it both ways — P4 can go back to its team. Watch the message from P1 to P8 and the reply coming back.", run() { const p = byId.P4; if (p) { p.x = 340; p.y = 300; } node("L1", 480, 300, "esp", "L1 · relay"); E.sc.rebuild(); log("One relay box in the gap — both sides connect to it", "ok", "L1"); after(1200, () => E.sc.sendMsg(byId.P1, byId.P8)); } },
+      { text: "<b>Wider gap? Two boxes talk over LoRa.</b> When the gap is wider than any hotspot can cover, put a box near each group. Each side's phones connect to their box, and the boxes talk to each other over LoRa — hundreds of metres. The right group has moved further away; the LoRa link holds.", run() { removeNode("L1"); node("L1", 400, 330, "esp", "L1 · relay"); node("L2", 700, 330, "esp", "L2 · relay"); ["P5", "P6", "P7", "P8"].forEach(id => { const n = byId[id]; if (n) n.x += 100; }); E.sc.rebuild(); log("Right group moved further away — L1 and L2 bridge it over LoRa", "ok", "L2"); after(1200, () => E.sc.sendMsg(byId.P3, byId.P6)); } },
+      { text: "<b>Now a wall.</b> Pick <b>Wall</b> and drag a line between two phones that are linked, say P1 and P2. Their link is cut — a collapsed building, a ridge. Relay boxes sit up high, so their links still reach over a wall, just not as far.", run() { E.sc.st.walls.push({ x1: 190, y1: 200, x2: 110, y2: 300 }); E.sc.rebuild(); log("Wall drawn between P1 and P2 — P1 is cut off", "warn", "P1"); } },
+      { text: "<b>Bridge the wall.</b> Drop a relay box near the wall — its hotspot reaches over it to P1, and over LoRa to the other box. P1 is back in, and the message from P1 to P2 goes over the wall and comes back. When phones can't reach, put a box in between or up high.", run() { node("L3", 90, 260, "esp", "L3 · relay"); node("L4", 250, 270, "esp", "L4 · relay"); E.sc.rebuild(); log("Relays on both sides of the wall — P1 reconnected over LoRa", "ok", "L3"); after(1200, () => E.sc.sendMsg(byId.P1, byId.P2)); } },
       { text: "<b>Your turn.</b> Add phones, move them apart until links break, drop relays, draw walls, remove things, and send messages to see the path light up. The numbers on the right tell you how connected everyone is.", run() { UI.tool = "move"; renderTools(); } }
     ]
   });
@@ -307,8 +345,8 @@
     onMove() { this.rebuild(); }, rangeOf(n) { return n.kind === "phone" ? (E.C.range || 310) : 0; },
     onControl(id) { if (id === "range") { this.rebuild(); } if (id === "revive") { E.nodes.forEach(n => revive(n.id)); this.rebuild(); log("All phones are back on", "ok"); } },
     onNodeClick(n) {
-      if (n.alive) { kill(n.id); log(n.id + " switched off — only its own links are lost", "bad"); }
-      else { revive(n.id); log(n.id + " back on — its neighbours found it again by themselves", "ok"); }
+      if (n.alive) { kill(n.id); log(n.id + " switched off — only its own links are lost", "bad", n.id); }
+      else { revive(n.id); log(n.id + " back on — its neighbours found it again by themselves", "ok", n.id); }
       this.rebuild();
     },
     tick(dt) {
@@ -352,14 +390,14 @@
       const s = this.st; E.nodes.forEach(n => { n.seen.clear(); n.badge = ""; }); Object.assign(s, { copies: 0, dup: 0, ttlDrop: 0, delivered: null, hops: null, sentAt: E.t, pid: "pkt-" + (++s.seq) });
       byId.A.seen.add(s.pid);
       s.copies += flood("A", null, { color: css("--gold"), label: "ttl " + (E.C.ttl - 1), payload: { pid: s.pid, ttl: E.C.ttl - 1, hops: 1 } });
-      log("A sends the message to its " + neighbors("A").length + " neighbours, hop limit " + E.C.ttl, "sys");
+      log("A sends the message to its " + neighbors("A").length + " neighbours, hop limit " + E.C.ttl, "sys", "A");
     },
     onArrive(n, p) {
       const s = this.st, { pid, ttl, hops } = p.payload; if (pid !== s.pid) return;
-      if (n.id === "I") { if (s.delivered == null) { s.delivered = E.t - s.sentAt; s.hops = hops; n.badge = "DELIVERED"; n.badgeColor = css("--green"); log("I got the message after " + hops + " hops in " + fmtT(s.delivered) + " — the first copy wins", "ok"); } else { s.dup++; } return; }
-      if (E.C.dedup && n.seen.has(pid)) { s.dup++; n.badge = "repeat ×" + (++n.dups || 1); n.badgeColor = css("--ink-3"); return; }
+      if (n.id === "I") { if (s.delivered == null) { s.delivered = E.t - s.sentAt; s.hops = hops; n.badge = "DELIVERED"; n.badgeColor = css("--green"); log("I got the message after " + hops + " hops in " + fmtT(s.delivered) + " — the first copy wins", "ok", "I"); } else { s.dup++; } return; }
+      if (E.C.dedup && n.seen.has(pid)) { s.dup++; n.badge = "repeat ×" + (++n.dups || 1); n.badgeColor = css("--ink-3"); if (n.dups === 1) say(n.id, "seen this one already — thrown away", "", 1800); return; }
       n.seen.add(pid); n.dups = 0;
-      if (ttl <= 0) { s.ttlDrop++; n.badge = "hops used up"; n.badgeColor = css("--red"); return; }
+      if (ttl <= 0) { s.ttlDrop++; n.badge = "hops used up"; n.badgeColor = css("--red"); say(n.id, "no hops left — dropped", "bad", 1800); return; }
       s.copies += flood(n.id, p.from, { color: css("--gold"), label: "ttl " + (ttl - 1), payload: { pid, ttl: ttl - 1, hops: hops + 1 } });
       if (s.copies > 400) { E.packets.length = 0; log("Stopped at 400 copies — this flood is exactly what the hop limit and repeat check prevent.", "bad"); }
     },
@@ -392,7 +430,7 @@
       link("A", "B"); link("B", "C"); link("C", "D"); link("A", "E", "wifi", { delay: 55 }); link("E", "F", "wifi", { delay: 55 }); link("F", "D", "wifi", { delay: 55 });
       byId.A.ring = css("--gold"); byId.D.ring = css("--violet");
     },
-    onControl(id, v) { if (id === "wall") { linkBetween("B", "C").up = !v; log(v ? "Wall: the B–C link is cut while A is talking" : "B–C link is back", v ? "bad" : "ok"); } if (id === "talk") { byId.A.badge = v ? "TALKING" : ""; byId.A.badgeColor = css("--red"); if (v) { this.st.first = null; log("Talk button pressed — A stops listening and starts sending tiny voice pieces", "sys"); } else log("Talk button released — A's mic closes, it can hear again", "sys"); } },
+    onControl(id, v) { if (id === "wall") { linkBetween("B", "C").up = !v; log(v ? "Wall: the B–C link is cut while A is talking" : "B–C link is back", v ? "bad" : "ok", "C"); if (v) say("D", "still hearing A — the voice was already flowing via E and F", "ok", 4000); } if (id === "talk") { byId.A.badge = v ? "TALKING" : ""; byId.A.badgeColor = css("--red"); if (v) { this.st.first = null; log("Talk button pressed — A stops listening and starts sending tiny voice pieces", "sys", "A"); } else log("Talk button released — A's mic closes, it can hear again", "sys", "A"); } },
     tick(dt) {
       const s = this.st; E.links.forEach(l => { l.loss = E.C.loss / 100; });
       if (E.C.talk) { s.acc += dt; while (s.acc >= 80) { s.acc -= 80; const seq = s.seq++; const t0 = E.t; flood("A", null, { color: css("--red"), r: 4, jitter: E.C.jitter, payload: { seq, t0 } }); } }
@@ -445,8 +483,8 @@
     badges() { ["B", "C", "E", "F"].forEach(id => { const n = byId[id]; n.sub = "open links " + n.ndp + "/4" + (n.ndp > 4 ? " ⚠" : ""); }); byId.D.sub = "got " + (this.st.verified + 1) + "/" + this.st.total; },
     onControl(id, v) {
       const s = this.st;
-      if (id === "go") { Object.assign(s, { next: 0, verified: -1, active: true, outstanding: {}, resumes: 0, retx: 0, ooo: 0, lastSeq: -1, t0: E.t, done: null, stored: {} }); E.nodes.forEach(n => { n.badge = ""; }); log("Start: 40 KB photo → 40 pieces of 1 KB, one phone at a time along " + s.path.join("–"), "sys"); }
-      if (id === "walk") { kill("C"); log("Phone C walked away — the pieces it was holding are lost", "bad"); }
+      if (id === "go") { Object.assign(s, { next: 0, verified: -1, active: true, outstanding: {}, resumes: 0, retx: 0, ooo: 0, lastSeq: -1, t0: E.t, done: null, stored: {} }); E.nodes.forEach(n => { n.badge = ""; }); log("Start: 40 KB photo → 40 pieces of 1 KB, one phone at a time along " + s.path.join("–"), "sys", "A"); }
+      if (id === "walk") { kill("C"); log("Phone C walked away — the pieces it was holding are lost", "bad", "C"); }
       if (id === "back") { revive("C"); log("C is back", "ok"); }
       if (id === "multi") { ["B", "C", "E", "F"].forEach(x => { byId[x].ndp = 2; }); s.locked = false; log(v ? "Both paths at once — pieces alternate between them" : "One path at a time", v ? "warn" : "sys"); }
       this.badges();
@@ -458,12 +496,12 @@
       ["B", "C", "E", "F"].forEach(id => { byId[id].ndp = 2; });
       const routes = E.C.multi ? [s.path, s.alt] : [this.route(0)]; routes.filter(Boolean).forEach(r => r.slice(1, -1).forEach(id => { byId[id].ndp += 1; }));
       if (E.C.multi) ["B", "C", "E", "F"].forEach(id => { byId[id].ndp += 1; }); // ARQ/control paths back to the sender
-      const over = ["B", "C", "E", "F"].some(id => byId[id].ndp > 4); if (over && !s.locked) { s.locked = true; log("A middle phone has more links open than it can handle — everything else through it is stuck", "bad"); } if (!over) s.locked = false;
+      const over = ["B", "C", "E", "F"].some(id => byId[id].ndp > 4); if (over && !s.locked) { s.locked = true; log("A middle phone has more links open than it can handle — everything else through it is stuck", "bad", ["B", "C", "E", "F"].find(id => byId[id].ndp > 4)); } if (!over) s.locked = false;
       // timeouts → checkpointed resume
-      for (const k in s.outstanding) { if (E.t - s.outstanding[k] > 1400) { delete s.outstanding[k]; const r = this.route(+k); if (!r) { byId.A.badge = "WAITING FOR A PATH"; byId.A.badgeColor = css("--amber"); return; } s.resumes++; s.retx++; log("No confirmation for piece " + k + ". A asks D: which piece did you get last? → " + s.verified + ". Carrying on from " + (s.verified + 1) + " along " + r.join("–") + ".", "warn"); s.next = s.verified + 1; byId.A.badge = "CONTINUING FROM " + s.next; byId.A.badgeColor = css("--green"); for (const j in s.outstanding) delete s.outstanding[j]; } }
+      for (const k in s.outstanding) { if (E.t - s.outstanding[k] > 1400) { delete s.outstanding[k]; const r = this.route(+k); if (!r) { byId.A.badge = "WAITING FOR A PATH"; byId.A.badgeColor = css("--amber"); return; } s.resumes++; s.retx++; log("No confirmation for piece " + k + ". A asks D: which piece did you get last? → " + s.verified + ". Carrying on from " + (s.verified + 1) + " along " + r.join("–") + ".", "warn", "A"); say("D", "last piece I got: #" + s.verified, "info", 2500); s.next = s.verified + 1; byId.A.badge = "CONTINUING FROM " + s.next; byId.A.badgeColor = css("--green"); for (const j in s.outstanding) delete s.outstanding[j]; } }
       s.sendAcc += dt; const gap = s.locked ? 520 : 130;
       if (s.sendAcc >= gap && s.next < s.total && Object.keys(s.outstanding).length < 6) { s.sendAcc = 0; const k = s.next++; const r = this.route(k); if (!r) { s.next--; byId.A.badge = "WAITING FOR A PATH"; byId.A.badgeColor = css("--amber"); return; } byId.A.badge = ""; s.outstanding[k] = E.t; this.hop(k, r, 0); }
-      if (s.verified >= s.total - 1 && !s.done) { s.done = E.t - s.t0; s.active = false; byId.D.badge = "PHOTO COMPLETE"; byId.D.badgeColor = css("--green"); log("All 40 pieces received in " + fmtT(s.done) + (s.resumes ? ", carrying on " + s.resumes + " time(s) after a break" : ""), "ok"); }
+      if (s.verified >= s.total - 1 && !s.done) { s.done = E.t - s.t0; s.active = false; byId.D.badge = "PHOTO COMPLETE"; byId.D.badgeColor = css("--green"); log("All 40 pieces received in " + fmtT(s.done) + (s.resumes ? ", carrying on " + s.resumes + " time(s) after a break" : ""), "ok", "D"); }
     },
     hop(k, r, i) {
       const s = this.st; const from = r[i], to = r[i + 1]; if (!to) return;
@@ -505,7 +543,7 @@
       link("A2", "L1", "wifi", { label: "AP" }); link("B2", "L2", "wifi", { label: "AP" }); link("L1", "L2", "lora", { label: "LoRa 865–867 MHz", ly: -26 }); link("L2", "EOC", "net", { label: "backhaul" });
       byId.A2.badge = "GATEWAY"; byId.B2.badge = "GATEWAY";
     },
-    onControl(id) { if (id === "raiseSOS") { const s = this.st; s.sosAt = E.t; this.enqueue({ kind: "SOS", bytes: 176, from: "A4", pri: 0 }); byId.A4.ring = css("--red"); log("A4 raises an SOS — it goes straight to the front of the line", "bad"); } },
+    onControl(id) { if (id === "raiseSOS") { const s = this.st; s.sosAt = E.t; this.enqueue({ kind: "SOS", bytes: 176, from: "A4", pri: 0 }); byId.A4.ring = css("--red"); log("A4 raises an SOS — it goes straight to the front of the line", "bad", "A4"); } },
     enqueue(m) { const s = this.st; if (m.pri === 0) s.q.unshift(m); else { if (E.C.summary || s.q.filter(x => x.pri === 2).length > 6) { const i = s.q.findIndex(x => x.pri === 2 && x.from === m.from); if (i >= 0) { s.q[i] = m; s.coal++; return; } } s.q.push(m); } },
     tick(dt) {
       const s = this.st; const win = 60000; s.busy = s.busy.filter(b => b.end > E.t - win);
@@ -519,9 +557,9 @@
         const m = s.q[0]; const at = loraAirtime(m.bytes, E.C.sf);
         const overBudget = dutyNow >= .01;
         if (overBudget && m.pri !== 0) { // routine telemetry yields; keep only the latest sample per origin
-          const latest = {}; s.q.filter(x => x.pri === 2).forEach(x => { latest[x.from] = x; }); const before = s.q.length; s.q = s.q.filter(x => x.pri === 0 || latest[x.from] === x); s.coal += before - s.q.length; s.holdLog = (s.holdLog || 0) + dt; if (s.holdLog > 5000) { s.holdLog = 0; log("Air time used up — routine reports are held back; only the newest one per phone is kept", "warn"); } return; }
+          const latest = {}; s.q.filter(x => x.pri === 2).forEach(x => { latest[x.from] = x; }); const before = s.q.length; s.q = s.q.filter(x => x.pri === 0 || latest[x.from] === x); s.coal += before - s.q.length; s.holdLog = (s.holdLog || 0) + dt; if (s.holdLog > 5000) { s.holdLog = 0; log("Air time used up — routine reports are held back; only the newest one per phone is kept", "warn", "L1"); } return; }
         s.q.shift(); s.chanFree = E.t + at; s.busy.push({ start: E.t, end: E.t + at }); s.sent++;
-        send("L1", "L2", { color: m.pri === 0 ? css("--red") : css("--amber"), label: m.kind + " " + m.bytes + "B", dur: at, r: 6, onArrive: () => { send("L2", "EOC", { color: m.pri === 0 ? css("--red") : css("--amber"), r: 5, onArrive: () => { if (m.pri === 0 && s.sosAt != null) { s.sosLat = E.t - s.sosAt; s.sosAt = null; byId.A4.ring = null; log("SOS reached the command centre in " + fmtT(s.sosLat), "ok"); } } }); } });
+        send("L1", "L2", { color: m.pri === 0 ? css("--red") : css("--amber"), label: m.kind + " " + m.bytes + "B", dur: at, r: 6, onArrive: () => { send("L2", "EOC", { color: m.pri === 0 ? css("--red") : css("--amber"), r: 5, onArrive: () => { if (m.pri === 0 && s.sosAt != null) { s.sosLat = E.t - s.sosAt; s.sosAt = null; byId.A4.ring = null; log("SOS reached the command centre in " + fmtT(s.sosLat), "ok", "EOC"); } } }); } });
       }
     },
     metrics() { const s = this.st; const at = loraAirtime(E.C.bytes, E.C.sf); const perHour = Math.floor(36000 / at); return [{ label: "air time for one report", value: (at / 1000).toFixed(3) + " s" }, { label: "reports allowed per hour", value: perHour, cls: perHour < 60 ? "bad" : "" }, { label: "air time used (last minute)", value: ((s.duty || 0) * 100).toFixed(2) + " % of 1 %", cls: (s.duty || 0) >= .01 ? "bad" : "good", bar: (s.duty || 0) * 10000, barCls: (s.duty || 0) >= .01 ? "red" : "green" }, { label: "messages waiting", value: s.q.length, cls: s.q.length > 8 ? "bad" : "" }, { label: "old reports replaced by newer", value: s.coal }, { label: "last SOS took", value: s.sosLat != null ? fmtT(s.sosLat) : "—", cls: s.sosLat > 10000 ? "bad" : s.sosLat ? "good" : "" }]; },
@@ -552,13 +590,13 @@
     badges() { const s = this.st; E.nodes.forEach(n => { if (n.kind === "phone") { n.badge = n.id === s.owner ? "ATTACHED · round " + s.gen : (n.capable === false ? "" : "can take over"); n.badgeColor = n.id === s.owner ? css("--green") : css("--ink-3"); } }); byId.L1.sub = "round " + s.gen + " · " + s.queued + " messages waiting · " + s.ack + " confirmed"; },
     onControl(id) {
       const s = this.st;
-      if (id === "cut" && byId.P1.alive) { kill("P1"); s.lostAt = E.t; s.phase = "lost"; log("P1's battery died. The radio box still has its " + s.queued + " waiting messages (" + s.ack + " already confirmed). The 'still here' signals stop.", "bad"); }
-      if (id === "return") { revive("P1"); log("P1 is back — it tries to attach with its old round-1 ticket", "sys"); send("P1", "L1", { color: css("--blue"), label: "attach (round 1)", onArrive: () => { if (s.gen > 1) { log("The box says no: round 1 is out of date, we are on round " + s.gen + ". So two phones can never both think they are in charge.", "warn"); byId.P1.badge = "REFUSED (old round)"; byId.P1.badgeColor = css("--red"); } else { s.owner = "P1"; this.badges(); } } }); }
+      if (id === "cut" && byId.P1.alive) { kill("P1"); s.lostAt = E.t; s.phase = "lost"; log("P1's battery died. The radio box still has its " + s.queued + " waiting messages (" + s.ack + " already confirmed). The 'still here' signals stop.", "bad", "P1"); }
+      if (id === "return") { revive("P1"); log("P1 is back — it tries to attach with its old round-1 ticket", "sys"); send("P1", "L1", { color: css("--blue"), label: "attach (round 1)", onArrive: () => { if (s.gen > 1) { log("The box says no: round 1 is out of date, we are on round " + s.gen + ". So two phones can never both think they are in charge.", "warn", "L1"); byId.P1.badge = "REFUSED (old round)"; byId.P1.badgeColor = css("--red"); } else { s.owner = "P1"; this.badges(); } } }); }
     },
     tick(dt) {
       const s = this.st; s.hbAcc += dt;
       if (s.hbAcc >= 2000) { s.hbAcc = 0; if (byId[s.owner].alive) send(s.owner, "L1", { color: css("--green"), r: 4, label: "hb", onArrive: () => { s.lastHb = E.t; } }); }
-      if (s.phase === "lost" && E.t - s.lastHb > 4200) { s.phase = "electing"; log("Two 'still here' signals missed — P1 is treated as gone. Approved phones ask to take over.", "warn"); ["P2", "P3"].forEach(c => send(c, "L1", { color: css("--blue"), label: "take over?", onArrive: () => { s.req = (s.req || 0) + 1; if (s.req === 2) { s.req = 0; const pick = byId.P2.ext ? "P2" : "P3"; s.gen++; s.owner = pick; s.phase = "syncing"; log("The box picks " + pick + " — plugged in beats 84 % battery. New round: " + s.gen, "ok"); this.badges(); send("L1", pick, { color: css("--amber"), label: "what's waiting", onArrive: () => send(pick, "L1", { color: css("--amber"), label: "carry on", onArrive: () => { s.phase = "attached"; s.recovered = E.t - s.lostAt; s.lastHb = E.t; log("They compare their lists of waiting messages and carry on. Back up in " + fmtT(s.recovered) + " (goal: under 20 s). Messages lost: none.", "ok"); this.badges(); } }) }); } } })); }
+      if (s.phase === "lost" && E.t - s.lastHb > 4200) { s.phase = "electing"; log("Two 'still here' signals missed — P1 is treated as gone. Approved phones ask to take over.", "warn", "L1"); ["P2", "P3"].forEach(c => send(c, "L1", { color: css("--blue"), label: "take over?", onArrive: () => { s.req = (s.req || 0) + 1; if (s.req === 2) { s.req = 0; const pick = byId.P2.ext ? "P2" : "P3"; s.gen++; s.owner = pick; s.phase = "syncing"; log("The box picks " + pick + " — plugged in beats 84 % battery. New round: " + s.gen, "ok", pick); this.badges(); send("L1", pick, { color: css("--amber"), label: "what's waiting", onArrive: () => send(pick, "L1", { color: css("--amber"), label: "carry on", onArrive: () => { s.phase = "attached"; s.recovered = E.t - s.lostAt; s.lastHb = E.t; log("They compare their lists of waiting messages and carry on. Back up in " + fmtT(s.recovered) + " (goal: under 20 s). Messages lost: none.", "ok", "L1"); this.badges(); } }) }); } } })); }
       if (s.phase === "attached" && Math.random() < dt / 6000) { s.queued++; s.ack++; this.badges(); }
     },
     metrics() { const s = this.st; const phase = { attached: "working", lost: "phone lost", electing: "choosing a new phone", syncing: "handing over" }[s.phase] || s.phase; return [{ label: "phone in charge", value: s.owner + " · round " + s.gen }, { label: "what's happening", value: phase, cls: s.phase === "attached" ? "good" : "warn" }, { label: "time to recover", value: s.recovered != null ? fmtT(s.recovered) : s.lostAt ? fmtT(E.t - s.lostAt) : "—", cls: s.recovered != null ? (s.recovered < 20000 ? "good" : "bad") : "" }, { label: "confirmed messages lost", value: 0, cls: "good" }]; },
@@ -592,20 +630,20 @@
     },
     onControl(id, v) {
       const s = this.st;
-      if (id === "terrain") { byId.R2.alive = !v; log(v ? "Hills: relay R2 can't be reached — the chain is broken" : "Relay chain is back", v ? "bad" : "ok"); }
-      if (id === "sky") { linkBetween("L1", "SAT").up = !!v; log(v ? "L1 can see the sky" : "L1 is under trees — it can't see the satellite", v ? "ok" : "bad"); }
+      if (id === "terrain") { byId.R2.alive = !v; log(v ? "Hills: relay R2 can't be reached — the chain is broken" : "Relay chain is back", v ? "bad" : "ok", "R2"); }
+      if (id === "sky") { linkBetween("L1", "SAT").up = !!v; log(v ? "L1 can see the sky" : "L1 is under trees — it can't see the satellite", v ? "ok" : "bad", "L1"); }
       if (id === "tx") {
         s.sentAt = E.t; const bytes = E.C.size;
         send("A1", "A2", { color: css("--gold"), label: bytes + " B", onArrive: () => send("A2", "L1", { color: css("--gold"), onArrive: () => {
           if (bfs("L1", "EOC") && byId.R2.alive) { s.path = "relay chain"; this.relay(["L1", "R1", "R2", "EOC"], 0, bytes); return; }
-          if (!linkBetween("L1", "SAT").up) { s.path = "none — kept for later"; log("No relay chain and no sky: the message waits on L1 until one comes back", "bad"); return; }
+          if (!linkBetween("L1", "SAT").up) { s.path = "none — kept for later"; log("No relay chain and no sky: the message waits on L1 until one comes back", "bad", "L1"); return; }
           const frames = Math.ceil(bytes / 340); s.frames = frames; s.path = "satellite · " + frames + " message" + (frames > 1 ? "s" : "");
-          if (frames > 1) log(bytes + " bytes is more than a satellite message can hold (340) — split into " + frames + " (this is why the app shows a size limit when you type)", "warn");
-          for (let f = 0; f < frames; f++) send("L1", "SAT", { color: css("--violet"), label: "sat " + (f + 1) + "/" + frames, r: 6, dur: 14000 + f * 9000 + rnd(0, 6000), onArrive: () => send("SAT", "EOC", { color: css("--violet"), r: 6, dur: 12000 + rnd(0, 8000), onArrive: () => { if (f === frames - 1) { s.lat = E.t - s.sentAt; s.sent++; log("Command got the message by satellite in " + fmtT(s.lat), "ok"); } } }) });
+          if (frames > 1) log(bytes + " bytes is more than a satellite message can hold (340) — split into " + frames + " (this is why the app shows a size limit when you type)", "warn", "L1"); else say("L1", "no relay chain — sending by satellite instead", "warn", 3000);
+          for (let f = 0; f < frames; f++) send("L1", "SAT", { color: css("--violet"), label: "sat " + (f + 1) + "/" + frames, r: 6, dur: 14000 + f * 9000 + rnd(0, 6000), onArrive: () => send("SAT", "EOC", { color: css("--violet"), r: 6, dur: 12000 + rnd(0, 8000), onArrive: () => { if (f === frames - 1) { s.lat = E.t - s.sentAt; s.sent++; log("Command got the message by satellite in " + fmtT(s.lat), "ok", "EOC"); } } }) });
         } }) });
       }
     },
-    relay(path, i, bytes) { const s = this.st; if (i >= path.length - 1) { s.lat = E.t - s.sentAt; s.sent++; log("Command got the message over the relay chain in " + fmtT(s.lat), "ok"); return; } send(path[i], path[i + 1], { color: css("--amber"), label: bytes + " B", dur: loraAirtime(Math.min(bytes, 240), 9) + 200, onArrive: () => this.relay(path, i + 1, bytes) }); },
+    relay(path, i, bytes) { const s = this.st; if (i >= path.length - 1) { s.lat = E.t - s.sentAt; s.sent++; log("Command got the message over the relay chain in " + fmtT(s.lat), "ok", "EOC"); return; } send(path[i], path[i + 1], { color: css("--amber"), label: bytes + " B", dur: loraAirtime(Math.min(bytes, 240), 9) + 200, onArrive: () => this.relay(path, i + 1, bytes) }); },
     metrics() { const s = this.st; return [{ label: "path used", value: s.path, wide: true }, { label: "last message took", value: s.lat != null ? fmtT(s.lat) : "—", cls: s.lat > 20000 ? "warn" : s.lat ? "good" : "" }, { label: "satellite messages needed", value: s.frames || "—" }, { label: "messages delivered", value: s.sent }]; },
     steps: [
       { text: "<b>Normal: the relay chain.</b> A small message hops L1 → R1 → R2 → command in a few seconds. The satellite isn't used while a cheaper path exists.", run() { E.sc.onControl("tx"); } },
@@ -639,8 +677,8 @@
       if (E.C.flicker) { s.flick += dt; if (s.flick > 6000) { s.flick = 0; s.covOn = !s.covOn; log(s.covOn ? "Signal is back" : "Signal dropped", s.covOn ? "ok" : "warn"); } } else s.covOn = true;
       E.nodes.filter(n => n.kind === "phone").forEach(n => {
         const inside = s.covOn && Math.hypot(n.x - c.x, n.y - c.y) < c.r;
-        if (inside) { s.valid[n.id] = (s.valid[n.id] || 0) + dt; if (s.valid[n.id] > 1500 && !n.internet) { n.internet = true; n.badge = "GATEWAY"; n.badgeColor = css("--green"); linkBetween(n.id, "CLOUD").up = true; log(n.id + " checked: the internet really works → tells the others 'I have internet'", "ok"); s.bgen = (s.bgen || 0) + 1; flood(n.id, null, { color: css("--green"), r: 4, label: "I have internet", payload: { beacon: n.id, gen: s.bgen, ttl: 4 } }); } }
-        else { s.valid[n.id] = 0; if (n.internet) { n.internet = false; n.badge = ""; linkBetween(n.id, "CLOUD").up = false; log(n.id + " lost the internet — the others go back to waiting", "warn"); } }
+        if (inside) { s.valid[n.id] = (s.valid[n.id] || 0) + dt; if (s.valid[n.id] > 1500 && !n.internet) { n.internet = true; n.badge = "GATEWAY"; n.badgeColor = css("--green"); linkBetween(n.id, "CLOUD").up = true; log(n.id + " checked: the internet really works → tells the others 'I have internet'", "ok", n.id); s.bgen = (s.bgen || 0) + 1; flood(n.id, null, { color: css("--green"), r: 4, label: "I have internet", payload: { beacon: n.id, gen: s.bgen, ttl: 4 } }); } }
+        else { s.valid[n.id] = 0; if (n.internet) { n.internet = false; n.badge = ""; linkBetween(n.id, "CLOUD").up = false; log(n.id + " lost the internet — the others go back to waiting", "warn", n.id); } }
       });
       const gws = E.nodes.filter(n => n.internet).map(n => n.id); s.gw = gws[0] || null;
       E.nodes.filter(n => n.kind === "phone").forEach(n => {
@@ -648,7 +686,7 @@
         const count = 1 + n.q; n.q = 0;
         if (n.internet) { s.tiers.DIRECT += count; if (count > 1) s.flushed += count - 1; for (let i = 0; i < Math.min(count, 4); i++) send(n.id, "CLOUD", { color: css("--blue"), r: 4, dur: 250 + i * 120 }); return; }
         const gw = gws.map(g => ({ g, p: bfs(n.id, g) })).filter(x => x.p).sort((a, b) => a.p.length - b.p.length)[0];
-        if (gw) { s.tiers.GATEWAY += count; if (count > 1) { s.flushed += count - 1; log(n.id + " sends its " + count + " waiting reports in one go, through " + gw.g, "ok"); } this.relay(gw.p, 0, Math.min(count, 4)); return; }
+        if (gw) { s.tiers.GATEWAY += count; if (count > 1) { s.flushed += count - 1; log(n.id + " sends its " + count + " waiting reports in one go, through " + gw.g, "ok", n.id); } this.relay(gw.p, 0, Math.min(count, 4)); return; }
         n.q += count; s.tiers.QUEUED++; n.sub = "waiting " + n.q;
       });
       E.nodes.forEach(n => { if (n.kind === "phone") n.sub = n.q ? "waiting " + n.q : ""; });
@@ -689,8 +727,8 @@
       if (id === "clr") { s.alerted.clear(); s.pkts = 0; s.t0 = null; s.full = null; E.nodes.forEach(n => { n.badge = ""; n.seen.clear(); n.internet = false; }); linkBetween("BE", "P5").up = false; return; }
       s.alerted.clear(); s.pkts = 0; s.t0 = E.t; s.full = null; E.nodes.forEach(n => { if (n.kind === "phone") { n.badge = ""; n.seen.clear(); } });
       const alertId = "alert-" + Math.random().toString(36).slice(2, 7);
-      if (id === "p1") { byId.P5.internet = true; linkBetween("BE", "P5").up = true; log("Way ①: P5 still has one bar of signal, so it becomes the way in for everyone.", "sys"); this.fromBackend(alertId, "P5"); }
-      if (id === "p2") { log("Way ②: nobody has signal. The server sends the warning by satellite to radio box L1, which hands it to P7, and it spreads from there.", "sys"); s.pkts++; send("BE", "SAT", { color: css("--violet"), label: "WARNING", r: 6, onArrive: () => { s.pkts++; send("SAT", "L1", { color: css("--violet"), label: "sat", r: 6, onArrive: () => { s.pkts++; send("L1", "P7", { color: css("--red"), label: "WARNING", onArrive: () => this.deliver("P7", null, alertId, 4) }); } }); } }); }
+      if (id === "p1") { byId.P5.internet = true; linkBetween("BE", "P5").up = true; log("Way ①: P5 still has one bar of signal, so it becomes the way in for everyone.", "sys", "P5"); this.fromBackend(alertId, "P5"); }
+      if (id === "p2") { log("Way ②: nobody has signal. The server sends the warning by satellite to radio box L1, which hands it to P7, and it spreads from there.", "sys", "BE"); s.pkts++; send("BE", "SAT", { color: css("--violet"), label: "WARNING", r: 6, onArrive: () => { s.pkts++; send("SAT", "L1", { color: css("--violet"), label: "sat", r: 6, onArrive: () => { s.pkts++; send("L1", "P7", { color: css("--red"), label: "WARNING", onArrive: () => this.deliver("P7", null, alertId, 4) }); } }); } }); }
       if (id === "p3") { log("Way ③: no messages needed. The danger map was loaded onto every phone at the briefing, so each phone already knows this area is high risk.", "sys"); E.nodes.filter(n => n.kind === "phone").forEach(n => { n.badge = "ALREADY KNOWS: HIGH RISK"; n.badgeColor = css("--amber"); s.alerted.add(n.id); }); s.full = 0; }
     },
     fromBackend(alertId, gw) {
@@ -701,7 +739,7 @@
     unicast(path, i, dst) { const s = this.st; if (i >= path.length - 1) { this.mark(byId[dst]); return; } s.pkts++; send(path[i], path[i + 1], { color: css("--red"), r: 4, label: "→" + dst, onArrive: () => this.unicast(path, i + 1, dst) }); },
     deliver(at, from, alertId, ttl) { const n = byId[at]; if (n.seen.has(alertId)) return; n.seen.add(alertId); this.mark(n); if (ttl > 0) this.st.pkts += flood(at, from, { color: css("--red"), r: 4, label: "for everyone", payload: { alertId, ttl: ttl - 1 } }); },
     onArrive(n, p) { if (p.payload.alertId && n.kind === "phone") this.deliver(n.id, p.from, p.payload.alertId, p.payload.ttl); },
-    mark(n) { const s = this.st; if (n.kind !== "phone") return; n.badge = "WARNING RECEIVED"; n.badgeColor = css("--red"); s.alerted.add(n.id); if (s.alerted.size === 8 && s.full == null) { s.full = E.t - s.t0; log("All 8 phones warned in " + fmtT(s.full) + " using " + s.pkts + " messages", "ok"); } },
+    mark(n) { const s = this.st; if (n.kind !== "phone") return; n.badge = "WARNING RECEIVED"; n.badgeColor = css("--red"); s.alerted.add(n.id); if (s.alerted.size === 8 && s.full == null) { s.full = E.t - s.t0; log("All 8 phones warned in " + fmtT(s.full) + " using " + s.pkts + " messages", "ok", n.id); } },
     metrics() { const s = this.st; return [{ label: "phones warned", value: s.alerted.size + " / 8", cls: s.alerted.size === 8 ? "good" : "", bar: s.alerted.size / 8 * 100, barCls: "green" }, { label: "messages sent", value: s.pkts }, { label: "time until everyone knew", value: s.full != null ? fmtT(s.full) : "—" }, { label: "how it was addressed", value: E.C.bcast ? "for everyone" : "one by one ×8" }]; },
     steps: [
       { text: "<b>The weather side is fine.</b> The station reports to our server over its own link, whatever happens to the local phone towers. The server raises a warning. Now it has to reach eight phones with no internet.", run() { send("IMD", "BE", { color: css("--violet"), label: "heavy rain", r: 6, onArrive: () => log("Server: this area is now CRITICAL. Warning ready to go out.", "warn") }); } },
@@ -730,7 +768,7 @@
       for (let i = 1; i <= 6; i++) link("P" + i, "R"); link("R", "EOC", "wifi", { label: "slow link", delay: 300 });
     },
     draw(ctx) { const s = this.st; const x = 560, y = 380, w = 260; const rows = [["SOS", s.q[0].length, css("--red")], ["Tasks", s.q[1].length, css("--amber")], ["Locations", Object.keys(s.q[2]).length, css("--gold")], ["Bulk data", s.q[3].length, css("--ink-3")]]; ctx.font = "600 11px Inter, sans-serif"; ctx.textAlign = "left"; ctx.fillStyle = css("--ink-2"); ctx.fillText("Waiting at R", x, y - 8); rows.forEach((r, i) => { ctx.fillStyle = css("--ink-2"); ctx.fillText(r[0], x, y + 14 + i * 22); ctx.fillStyle = css("--line"); ctx.fillRect(x + 90, y + 4 + i * 22, w - 90, 12); ctx.fillStyle = r[2]; ctx.fillRect(x + 90, y + 4 + i * 22, Math.min(w - 90, r[1] * 6), 12); ctx.fillStyle = css("--ink"); ctx.font = "600 10px JetBrains Mono, monospace"; ctx.fillText(r[1], x + w + 6, y + 14 + i * 22); ctx.font = "600 11px Inter, sans-serif"; }); },
-    onControl(id) { if (id === "raise") { this.emit("P3", 0, "SOS"); log("P3 raises a real SOS", "bad"); } },
+    onControl(id) { if (id === "raise") { this.emit("P3", 0, "SOS"); log("P3 raises a real SOS", "bad", "P3"); } },
     emit(from, pri, kind) { const s = this.st; send(from, "R", { color: [css("--red"), css("--amber"), css("--gold"), css("--ink-3")][pri], r: pri === 0 ? 6 : 4, payload: { pri, kind, from, t0: E.t }, onArrive: (n, p) => { const m = p.payload; if (pri === 2) { if (s.q[2][from]) s.coal++; s.q[2][from] = m; } else if (pri === 3) { if (s.q[3].length > 12) s.dropped3++; else s.q[3].push(m); } else s.q[pri].push(m); } }); },
     tick(dt) {
       const s = this.st;
@@ -780,11 +818,11 @@
     onControl(id) {
       const s = this.st;
       if (id === "wall") { const l = linkBetween("P4", "P5"); if (l) l.up = !E.C.wall; log(E.C.wall ? "Wall: the P4–P5 link is cut. Two halves, each still working." : "Wall gone — the halves join back and compare notes", E.C.wall ? "bad" : "ok"); if (!E.C.wall) this.sync(); }
-      if (id === "a1" || id === "a2") { const from = id === "a1" ? "C1" : "C2"; const to = id === "a1" ? "P3" : "P7"; const rec = { task: "T-7", to, by: from, t: E.t, epoch: from }; log(from + " gives task T-7 to " + to, "sys"); this.propagate(from, rec); }
+      if (id === "a1" || id === "a2") { const from = id === "a1" ? "C1" : "C2"; const to = id === "a1" ? "P3" : "P7"; const rec = { task: "T-7", to, by: from, t: E.t, epoch: from }; log(from + " gives task T-7 to " + to, "sys", from); this.propagate(from, rec); }
     },
     propagate(from, rec) { const reach = reachable(from); reach.forEach(id => { const n = byId[id]; const prev = n.log["T-7"]; if (prev && prev.to !== rec.to) { n.conflict = true; } n.log["T-7"] = prev && prev.to !== rec.to ? { ...rec, conflict: [prev, rec] } : rec; }); const path = [...reach].filter(x => x !== from); path.forEach((id, i) => { const p = bfs(from, id); if (p) this.hop(p, 0, css("--gold")); }); this.badges(); },
     hop(path, i, color) { if (i >= path.length - 1) return; send(path[i], path[i + 1], { color, r: 4, onArrive: () => this.hop(path, i + 1, color) }); },
-    sync() { const s = this.st; const all = E.nodes; const recs = all.map(n => n.log["T-7"]).filter(Boolean); const uniq = {}; recs.forEach(r => { uniq[r.to] = r; }); const vals = Object.values(uniq); all.forEach(n => { if (vals.length > 1) { n.log["T-7"] = { task: "T-7", conflict: vals, to: vals.map(v => v.to).join(" & ") }; n.conflict = true; } else if (vals.length === 1) n.log["T-7"] = vals[0]; n.obs = 7; }); s.synced++; if (vals.length > 1) { s.conflicts = 1; log("Comparing notes: T-7 was given to " + vals.map(v => v.to + " (by " + v.by + ")").join(" and ") + " — shown as a clash for the coordinator to sort out", "warn"); } else log("Comparing notes: everyone agrees, no clashes", "ok"); for (let i = 0; i < 4; i++) { send("P4", "P5", { color: css("--blue"), r: 4, dur: 200 + i * 120 }); send("P5", "P4", { color: css("--blue"), r: 4, dur: 200 + i * 120 }); } this.badges(); },
+    sync() { const s = this.st; const all = E.nodes; const recs = all.map(n => n.log["T-7"]).filter(Boolean); const uniq = {}; recs.forEach(r => { uniq[r.to] = r; }); const vals = Object.values(uniq); all.forEach(n => { if (vals.length > 1) { n.log["T-7"] = { task: "T-7", conflict: vals, to: vals.map(v => v.to).join(" & ") }; n.conflict = true; } else if (vals.length === 1) n.log["T-7"] = vals[0]; n.obs = 7; }); s.synced++; if (vals.length > 1) { s.conflicts = 1; log("Comparing notes: T-7 was given to " + vals.map(v => v.to + " (by " + v.by + ")").join(" and ") + " — shown as a clash for the coordinator to sort out", "warn", "P4"); } else log("Comparing notes: everyone agrees, no clashes", "ok", "P4"); for (let i = 0; i < 4; i++) { send("P4", "P5", { color: css("--blue"), r: 4, dur: 200 + i * 120 }); send("P5", "P4", { color: css("--blue"), r: 4, dur: 200 + i * 120 }); } this.badges(); },
     badges() { E.nodes.forEach(n => { const r = n.log["T-7"]; n.badge = r ? (r.conflict ? "T-7 CLASH" : "T-7 → " + r.to) : ""; n.badgeColor = r && r.conflict ? css("--red") : css("--green"); }); },
     tick(dt) { const s = this.st; s.acc += dt; if (s.acc > 1500) { s.acc = 0; E.nodes.forEach(n => { n.obs = reachable(n.id).size - 1; flood(n.id, null, { color: css("--green"), r: 3, payload: { obs: 1, ttl: 0 } }); }); } },
     metrics() { const s = this.st; const halves = new Set(E.nodes.map(n => [...reachable(n.id)].sort()[0])).size; const conf = E.nodes.filter(n => n.log["T-7"] && n.log["T-7"].conflict).length; return [{ label: "separate groups", value: halves, cls: halves > 1 ? "warn" : "good" }, { label: "phones showing the T-7 clash", value: conf + " / 8", cls: conf ? "bad" : "good" }, { label: "phones C1 can see", value: byId.C1 ? byId.C1.obs : 0 }, { label: "phones C2 can see", value: byId.C2 ? byId.C2.obs : 0 }, { label: "times notes were compared", value: s.synced }]; },
