@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RescueLINK Mesh Simulator</title>
-<meta name="description" content="Interactive simulation of RescueLINK's four-tier mesh: leaderless clusters, managed flooding, Codec 2 PTT, chunked images, LoRa airtime, gateway fail-over, satellite fall-back, DTN transition, alerts into dead zones, priority queues, partition and rejoin.">
+<title>Mesh Simulation</title>
+<meta name="description" content="Interactive simulation of how phones talk to each other when the network is down: a group with no leader, how messages find their way, voice, photos, the LoRa radio link, satellite backup, signal returning, warnings into a dead zone, urgent messages first, and a group that splits.">
 <script>(function(){var t=null;try{t=localStorage.getItem("rl_theme");}catch(e){}if(t!=="dark"&&t!=="light"){t=window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}document.documentElement.setAttribute("data-theme",t);})();</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -13,9 +13,9 @@
 </head>
 <body>
 <header class="top">
-  <a class="brand" href="https://joythomasl.github.io/RescueLINK/">
+  <a class="brand" href="./">
     <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M3 22c6-9 20-9 26 0" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><circle cx="6" cy="20" r="2.4" fill="currentColor"/><circle cx="16" cy="15.4" r="2.4" fill="currentColor"/><circle cx="26" cy="20" r="2.4" fill="currentColor"/><path d="M6 20l10-4.6L26 20" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".6"/></svg>
-    <span><b>RescueLINK</b><small>How the phones talk · simulator</small></span>
+    <span><b>Mesh Simulation</b><small>How phones talk when the network is down</small></span>
   </a>
   <span class="sp"></span>
   <div class="speed" role="group" aria-label="Simulation speed">
@@ -25,7 +25,6 @@
     <button type="button" class="tb spd" data-s="20">20×</button>
     <span class="clock mono" id="clock">t = 0.0 s</span>
   </div>
-  <a class="lnk" href="https://joythomasl.github.io/RescueLINK/">Command console</a>
   <button type="button" class="theme-toggle" id="theme-toggle"></button>
 </header>
 

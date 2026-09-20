@@ -1,6 +1,6 @@
-# RescueLINK — Mesh Simulation
+# Mesh Simulation
 
-Interactive simulation of how RescueLINK's phones talk to each other when the network is down. Companion to the [RescueLINK command console](https://github.com/joythomasl/RescueLINK). Built for Smart India Hackathon 2026 (SIH26206) by Team ANTIMATTER.
+Interactive simulation of how phones can talk to each other when the network is down: a leaderless group, messages finding their own way, voice, photos, a LoRa radio link between groups, satellite backup, and what happens when signal returns. Built for Smart India Hackathon 2026 by Team ANTIMATTER.
 
 **Live:** https://joythomasl.github.io/mesh_simulation/
 

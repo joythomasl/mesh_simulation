@@ -1,5 +1,5 @@
 /* ============================================================
-   RescueLINK — Mesh communication simulator
+   Mesh Simulation — how phones talk when the network is down
 
    A small discrete-event engine (nodes, links, in-flight packets,
    simulated clock) plus one scenario per mechanism in the design:
