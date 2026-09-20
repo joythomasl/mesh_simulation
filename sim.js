@@ -85,7 +85,10 @@
     });
     // range circle for the node under the pointer (or being dragged)
     const focus = UI.drag ? UI.drag.node : UI.hover;
-    if (focus && focus.alive && E.sc && E.sc.rangeOf) { const R = E.sc.rangeOf(focus); if (R) { ctx.beginPath(); ctx.arc(focus.x, focus.y, R, 0, Math.PI * 2); ctx.fillStyle = focus.kind === "esp" ? gold : css("--green"); ctx.globalAlpha = .07; ctx.fill(); ctx.globalAlpha = .55; ctx.setLineDash([5, 6]); ctx.strokeStyle = focus.kind === "esp" ? gold : css("--green"); ctx.lineWidth = 1.2; ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1; ctx.fillStyle = ink3; ctx.font = "500 10px JetBrains Mono, monospace"; ctx.textAlign = "center"; ctx.fillText((focus.kind === "esp" ? "relay reach " : "phone reach ") + Math.round(R) + " m", focus.x, focus.y - R - 6); } }
+    if (focus && focus.alive && E.sc && (E.sc.ranges || E.sc.rangeOf)) {
+      const rs = E.sc.ranges ? E.sc.ranges(focus) : [{ r: E.sc.rangeOf(focus), color: focus.kind === "esp" ? gold : css("--green"), label: (focus.kind === "esp" ? "relay reach " : "phone reach ") + Math.round(E.sc.rangeOf(focus)) + " m" }];
+      rs.filter(x => x.r).forEach(x => { ctx.beginPath(); ctx.arc(focus.x, focus.y, x.r, 0, Math.PI * 2); ctx.fillStyle = x.color; ctx.globalAlpha = .07; ctx.fill(); ctx.globalAlpha = .55; ctx.setLineDash([5, 6]); ctx.strokeStyle = x.color; ctx.lineWidth = 1.2; ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1; ctx.fillStyle = ink3; ctx.font = "500 10px JetBrains Mono, monospace"; ctx.textAlign = "center"; ctx.fillText(x.label, focus.x, Math.max(12, focus.y - x.r - 6)); });
+    }
     // nodes
     E.nodes.forEach(n => {
       ctx.globalAlpha = n.alive ? 1 : .5;
@@ -205,7 +208,8 @@
     ],
     controls: [
       { id: "wifi", type: "range", label: "Phone reach", min: 80, max: 260, step: 10, value: 150, unit: " m", desc: "How far one phone can talk to another. Walls block it." },
-      { id: "lora", type: "range", label: "Relay reach (LoRa)", min: 300, max: 900, step: 50, value: 650, unit: " m", desc: "How far two relay boxes can talk. Walls only shorten it." },
+      { id: "attach", type: "range", label: "Relay-to-phone reach", min: 60, max: 260, step: 10, value: 150, unit: " m", desc: "How far a phone can be from a relay box and still connect to it (the box runs a Wi-Fi hotspot). One box in a gap can join phones on both sides." },
+      { id: "lora", type: "range", label: "Relay-to-relay reach (LoRa)", min: 300, max: 900, step: 50, value: 650, unit: " m", desc: "How far two relay boxes can talk over LoRa radio. Walls only shorten it." },
       { id: "traffic", type: "switch", label: "Phones chat on their own", value: true },
       { id: "acts", type: "buttons", buttons: [{ id: "clearWalls", label: "Clear walls" }, { id: "layout", label: "Reset layout" }] }
     ],
@@ -215,6 +219,7 @@
       s.n = 8; this.rebuild();
     },
     rangeOf(n) { return n.kind === "esp" ? E.C.lora : E.C.wifi; },
+    ranges(n) { return n.kind === "esp" ? [{ r: E.C.attach, color: css("--green"), label: "phones connect within " + E.C.attach + " m" }, { r: E.C.lora, color: css("--gold"), label: "other relay boxes within " + E.C.lora + " m (LoRa)" }] : [{ r: E.C.wifi, color: css("--green"), label: "phone reach " + E.C.wifi + " m" }]; },
     blocked(a, b) { return this.st.walls.some(w => segIntersect(a, b, { x: w.x1, y: w.y1 }, { x: w.x2, y: w.y2 })); },
     rebuild() {
       const s = this.st; E.links.length = 0; const ns = E.nodes;
@@ -222,21 +227,21 @@
         const a = ns[i], b = ns[j]; const d = Math.hypot(a.x - b.x, a.y - b.y); const wall = this.blocked(a, b);
         if (a.kind === "phone" && b.kind === "phone") { if (d < E.C.wifi && !wall) link(a.id, b.id, "wifi", { q: 1 - d / E.C.wifi }); }
         else if (a.kind === "esp" && b.kind === "esp") { const R = wall ? E.C.lora * .6 : E.C.lora; if (d < R) link(a.id, b.id, "lora", { delay: 700, label: wall ? "over the wall" : "" }); }
-        else { if (d < 70 && !wall) link(a.id, b.id, "wifi", { delay: 60, q: 1 - d / 70 }); }   // phone ↔ relay: short hop, the phone attaches to the box
+        else { if (d < E.C.attach && !wall) link(a.id, b.id, "wifi", { delay: 60, q: 1 - d / E.C.attach }); }   // phone ↔ relay: the phone connects to the box's hotspot
       }
       // connected groups + share of phone pairs that can talk
       const phones = ns.filter(n => n.kind === "phone"); let pairs = 0, ok = 0; const seen = new Set(); let groups = 0;
       phones.forEach(p => { if (!seen.has(p.id)) { groups++; reachable(p.id).forEach(x => seen.add(x)); } });
       for (let i = 0; i < phones.length; i++) { const rs = reachable(phones[i].id); for (let j = i + 1; j < phones.length; j++) { pairs++; if (rs.has(phones[j].id)) ok++; } }
       s.groups = groups; s.pairs = pairs ? Math.round(ok / pairs * 100) : 100;
-      E.nodes.forEach(n => { if (n.kind === "esp") n.sub = neighbors(n.id).some(x => byId[x].kind === "phone") ? "phone attached" : "no phone nearby"; });
+      E.nodes.forEach(n => { if (n.kind === "esp") { const ph = neighbors(n.id).filter(x => byId[x].kind === "phone").length; n.sub = ph ? ph + " phone" + (ph > 1 ? "s" : "") + " connected" : "no phone in reach"; } });
     },
     onMove() { this.rebuild(); },
     onControl(id) { const s = this.st; if (id === "clearWalls") { s.walls = []; log("Walls cleared", "sys"); } if (id === "layout") { const keep = E.C; load(this); Object.assign(E.C, keep); return; } this.rebuild(); },
     onPointerDown(pt, n, tool) {
       const s = this.st;
       if (tool === "phone" && !n) { const id = "P" + (++s.n); node(id, pt.x, pt.y, "phone", id); log("Added phone " + id, "ok"); this.rebuild(); }
-      if (tool === "esp" && !n) { const id = "L" + (++s.n); node(id, pt.x, pt.y, "esp", id + " · relay"); log("Dropped relay box " + id + " — nearby phones attach to it; it reaches other relays over LoRa", "ok"); this.rebuild(); }
+      if (tool === "esp" && !n) { const id = "L" + (++s.n); node(id, pt.x, pt.y, "esp", id + " · relay"); log("Dropped relay box " + id + " — phones within " + E.C.attach + " m connect to it; it reaches other boxes over LoRa up to " + E.C.lora + " m", "ok"); this.rebuild(); }
       if (tool === "wall") s.draft = { x1: pt.x, y1: pt.y, x2: pt.x, y2: pt.y };
       if (tool === "delete") { if (n) { removeNode(n.id); log("Removed " + n.id, "warn"); this.rebuild(); } else { const w = s.walls.find(w => segDist(pt, { x: w.x1, y: w.y1 }, { x: w.x2, y: w.y2 }) < 10); if (w) { s.walls.splice(s.walls.indexOf(w), 1); log("Wall removed", "warn"); this.rebuild(); } } }
       if (tool === "send" && n && n.kind === "phone") this.onNodeClick(n);
@@ -251,7 +256,10 @@
     sendMsg(a, b) {
       const s = this.st; const path = bfs(a.id, b.id);
       if (!path) { s.failed++; a.badge = "NO WAY THROUGH"; a.badgeColor = css("--red"); after(1800, () => { if (a.badge === "NO WAY THROUGH") a.badge = ""; }); log("No way from " + a.id + " to " + b.id + " — move a phone closer, or drop a relay in between", "bad"); return; }
-      s.path = path; s.pathAt = E.t; const hop = i => { if (i >= path.length - 1) { s.sent++; log(a.id + " → " + b.id + " delivered in " + (path.length - 1) + " hop" + (path.length > 2 ? "s" : "") + " via " + path.join(" → "), "ok"); return; } send(path[i], path[i + 1], { color: css("--gold"), r: 5, onArrive: () => hop(i + 1) }); }; hop(0);
+      s.path = path; s.pathAt = E.t;
+      const back = path.slice().reverse();
+      const reply = i => { if (i >= back.length - 1) { s.sent++; log(b.id + " → " + a.id + " reply delivered — two-way link confirmed", "ok"); return; } send(back[i], back[i + 1], { color: css("--blue"), r: 5, label: i === 0 ? "reply" : "", onArrive: () => reply(i + 1) }); };
+      const hop = i => { if (i >= path.length - 1) { s.sent++; log(a.id + " → " + b.id + " delivered in " + (path.length - 1) + " hop" + (path.length > 2 ? "s" : "") + " via " + path.join(" → ") + " — sending reply", "ok"); after(300, () => reply(0)); return; } send(path[i], path[i + 1], { color: css("--gold"), r: 5, label: i === 0 ? "msg" : "", onArrive: () => hop(i + 1) }); }; hop(0);
     },
     tick(dt) {
       const s = this.st; this.rebuild();
@@ -272,7 +280,8 @@
     steps: [
       { text: "<b>Two groups, one gap.</b> The phones on the left can talk to each other, and so can the ones on the right — but not across the gap. Try it: pick the <b>Send</b> tool and click P4, then P5. No way through.", run() { UI.tool = "send"; renderTools(); } },
       { text: "<b>Drag a phone into the gap.</b> Pick <b>Move</b> and drag P4 to the middle. When it gets within reach of both sides, links appear on their own and the two groups become one.", run() { UI.tool = "move"; renderTools(); const p = byId.P4; if (p) { p.x = 480; p.y = 300; E.sc.rebuild(); log("P4 moved to the middle — it now bridges the two groups", "ok"); } } },
-      { text: "<b>Or drop relay boxes.</b> A phone can't stay in the gap forever. Pick <b>Relay</b> and click near each group. A phone attaches to the box next to it, and the two boxes talk to each other over LoRa — much further than phones can.", run() { const p = byId.P4; if (p) { p.x = 340; p.y = 300; } node("L1", 380, 335, "esp", "L1 · relay"); node("L2", 585, 335, "esp", "L2 · relay"); E.sc.rebuild(); log("Two relay boxes dropped — LoRa bridge across the gap, P4 can go back", "ok"); } },
+      { text: "<b>Or drop one relay box in the gap.</b> A phone can't stay there forever. Pick <b>Relay</b> and click in the middle. Phones on both sides connect to the box (it runs a Wi-Fi hotspot), and messages go through it both ways — P4 can go back to its team. Watch the message from P1 to P8 and the reply coming back.", run() { const p = byId.P4; if (p) { p.x = 340; p.y = 300; } node("L1", 480, 300, "esp", "L1 · relay"); E.sc.rebuild(); log("One relay box in the gap — both sides connect to it", "ok"); after(1200, () => E.sc.sendMsg(byId.P1, byId.P8)); } },
+      { text: "<b>Wider gap? Two boxes talk over LoRa.</b> When the gap is wider than any hotspot can cover, put a box near each group. Each side's phones connect to their box, and the boxes talk to each other over LoRa — hundreds of metres. The right group has moved further away; the LoRa link holds.", run() { removeNode("L1"); node("L1", 400, 330, "esp", "L1 · relay"); node("L2", 700, 330, "esp", "L2 · relay"); ["P5", "P6", "P7", "P8"].forEach(id => { const n = byId[id]; if (n) n.x += 100; }); E.sc.rebuild(); log("Right group moved further away — L1 and L2 bridge it over LoRa", "ok"); after(1200, () => E.sc.sendMsg(byId.P3, byId.P6)); } },
       { text: "<b>Now a wall.</b> Pick <b>Wall</b> and drag a line between two phones that are linked, say P1 and P2. Their link is cut — a collapsed building, a ridge. The LoRa link between the boxes is not cut: long-range radio reaches over it (a bit shorter).", run() { E.sc.st.walls.push({ x1: 190, y1: 200, x2: 110, y2: 300 }); E.sc.rebuild(); log("Wall drawn between P1 and P2 — P1 is cut off", "warn"); } },
       { text: "<b>Bridge the wall.</b> Drop a relay on each side of the wall, close to a phone. The phones attach, the boxes talk over the wall, and P1 is back in. That is the whole idea: when phones can't reach, put a box in between or up high.", run() { node("L3", 90, 260, "esp", "L3 · relay"); node("L4", 250, 270, "esp", "L4 · relay"); E.sc.rebuild(); log("Relays on both sides of the wall — P1 reconnected over LoRa", "ok"); } },
       { text: "<b>Your turn.</b> Add phones, move them apart until links break, drop relays, draw walls, remove things, and send messages to see the path light up. The numbers on the right tell you how connected everyone is.", run() { UI.tool = "move"; renderTools(); } }
