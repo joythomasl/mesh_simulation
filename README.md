@@ -4,6 +4,10 @@ Interactive simulation of how phones can talk to each other when the network is 
 
 **Live:** https://joythomasl.github.io/mesh_simulation/
 
+## Free play
+
+**Build your own mesh** — drag phones, add phones, drop ESP32 relay boxes, draw walls that block phone links (relays reach over them with LoRa), and send messages to see the path light up.
+
 ## Eleven short demos
 
 1. A group of phones with no leader

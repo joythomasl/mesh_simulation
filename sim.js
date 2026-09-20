@@ -44,6 +44,10 @@
   function hint(t) { $("hint").textContent = t || ""; }
   function fmtT(ms) { return (ms / 1000).toFixed(1) + " s"; }
   function kill(id) { const n = byId[id]; if (!n) return; n.alive = false; E.packets = E.packets.filter(p => p.from !== id && p.to !== id); }
+  function removeNode(id) { E.nodes = E.nodes.filter(n => n.id !== id); delete byId[id]; E.links = E.links.filter(l => l.a !== id && l.b !== id); E.packets = E.packets.filter(p => p.from !== id && p.to !== id); }
+  function segIntersect(a, b, c, d) { const o = (p, q, r) => Math.sign((q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y)); return o(a, b, c) !== o(a, b, d) && o(c, d, a) !== o(c, d, b) && o(a, b, c) !== 0 && o(c, d, a) !== 0; }
+  function segDist(p, a, b) { const dx = b.x - a.x, dy = b.y - a.y; const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1))); return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy)); }
+  const UI = { drag: null, hover: null, tool: "move", pt: null };
   function revive(id) { const n = byId[id]; if (n) n.alive = true; }
   function ring(cx, cy, n, r) { const out = []; for (let i = 0; i < n; i++) { const a = -Math.PI / 2 + i * 2 * Math.PI / n; out.push([cx + Math.cos(a) * r * (i % 2 ? 1 : .78), cy + Math.sin(a) * r * (i % 2 ? .82 : 1)]); } return out; }
   function meshByRange(ids, range, kind) { for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) { const a = byId[ids[i]], b = byId[ids[j]]; if (Math.hypot(a.x - b.x, a.y - b.y) < range) link(ids[i], ids[j], kind || "wifi"); } }
@@ -66,7 +70,9 @@
       if (l.hidden && dead) return;
       ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
       ctx.setLineDash(dead ? [3, 6] : l.kind === "lora" ? [9, 6] : l.kind === "sat" ? [2, 5] : []);
-      ctx.strokeStyle = dead ? red : COL[l.kind](); ctx.globalAlpha = dead ? .45 : (l.kind === "wifi" ? .55 : .9); ctx.lineWidth = dead ? 1.2 : l.kind === "wifi" ? 2.2 : 2;
+      const col = dead ? red : COL[l.kind]();
+      if (!dead) { ctx.save(); ctx.shadowColor = col; ctx.shadowBlur = l.kind === "wifi" ? 8 : 12; ctx.strokeStyle = col; ctx.globalAlpha = .35; ctx.lineWidth = (l.kind === "wifi" ? 2.2 : 2) + 3; ctx.stroke(); ctx.restore(); }
+      ctx.strokeStyle = col; ctx.globalAlpha = dead ? .45 : (l.kind === "wifi" ? .75 : .95); ctx.lineWidth = dead ? 1.2 : l.kind === "wifi" ? (l.q != null ? 1.4 + l.q * 2 : 2.2) : 2;
       ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
       if (l.label) { ctx.fillStyle = ink3; ctx.font = "500 10px JetBrains Mono, monospace"; ctx.textAlign = "center"; ctx.fillText(l.label, (a.x + b.x) / 2, (a.y + b.y) / 2 - 6 + (l.ly || 0)); }
     });
@@ -74,19 +80,24 @@
     // packets
     E.packets.forEach(p => {
       const a = byId[p.from], b = byId[p.to]; const x = a.x + (b.x - a.x) * p.prog, y = a.y + (b.y - a.y) * p.prog;
-      ctx.beginPath(); ctx.arc(x, y, p.r, 0, Math.PI * 2); ctx.fillStyle = p.color; ctx.fill(); ctx.strokeStyle = paper; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.save(); ctx.shadowColor = p.color; ctx.shadowBlur = 10; ctx.beginPath(); ctx.arc(x, y, p.r, 0, Math.PI * 2); ctx.fillStyle = p.color; ctx.fill(); ctx.restore(); ctx.strokeStyle = paper; ctx.lineWidth = 1.5; ctx.stroke();
       if (p.label) { ctx.fillStyle = ink; ctx.font = "600 9.5px JetBrains Mono, monospace"; ctx.textAlign = "center"; ctx.fillText(p.label, x, y - p.r - 3); }
     });
+    // range circle for the node under the pointer (or being dragged)
+    const focus = UI.drag ? UI.drag.node : UI.hover;
+    if (focus && focus.alive && E.sc && E.sc.rangeOf) { const R = E.sc.rangeOf(focus); if (R) { ctx.beginPath(); ctx.arc(focus.x, focus.y, R, 0, Math.PI * 2); ctx.fillStyle = focus.kind === "esp" ? gold : css("--green"); ctx.globalAlpha = .07; ctx.fill(); ctx.globalAlpha = .55; ctx.setLineDash([5, 6]); ctx.strokeStyle = focus.kind === "esp" ? gold : css("--green"); ctx.lineWidth = 1.2; ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1; ctx.fillStyle = ink3; ctx.font = "500 10px JetBrains Mono, monospace"; ctx.textAlign = "center"; ctx.fillText((focus.kind === "esp" ? "relay reach " : "phone reach ") + Math.round(R) + " m", focus.x, focus.y - R - 6); } }
     // nodes
     E.nodes.forEach(n => {
       ctx.globalAlpha = n.alive ? 1 : .5;
+      const hot = n === focus;
+      if (n.alive && (n.kind === "phone" || n.kind === "esp")) { ctx.save(); ctx.shadowColor = n.kind === "esp" ? gold : "#2a6fd6"; ctx.shadowBlur = hot ? 22 : 10; ctx.beginPath(); ctx.arc(n.x, n.y, n.r + (hot ? 2 : 0), 0, Math.PI * 2); ctx.fillStyle = "rgba(0,0,0,0.01)"; ctx.fill(); ctx.restore(); }
       if (n.ring) { ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 7, 0, Math.PI * 2); ctx.strokeStyle = n.ring; ctx.lineWidth = 2.5; ctx.stroke(); }
       ctx.fillStyle = n.alive ? (n.fill || (n.kind === "phone" ? "#2a6fd6" : n.kind === "esp" ? gold : n.kind === "cloud" ? css("--blue") : n.kind === "cmd" ? css("--gold-2") : n.kind === "sensor" ? css("--violet") : "#888")) : ink3;
       ctx.strokeStyle = paper; ctx.lineWidth = 2;
-      if (n.kind === "esp") { ctx.save(); ctx.translate(n.x, n.y); ctx.rotate(Math.PI / 4); ctx.fillRect(-10, -10, 20, 20); ctx.strokeRect(-10, -10, 20, 20); ctx.restore(); }
+      if (n.kind === "esp") { const g = ctx.createLinearGradient(n.x - 10, n.y - 10, n.x + 10, n.y + 10); g.addColorStop(0, "#E2B54D"); g.addColorStop(1, "#9A6F12"); ctx.fillStyle = n.alive ? g : ink3; ctx.save(); ctx.translate(n.x, n.y); ctx.rotate(Math.PI / 4); const k = hot ? 12 : 10; ctx.fillRect(-k, -k, 2 * k, 2 * k); ctx.strokeRect(-k, -k, 2 * k, 2 * k); ctx.restore(); ctx.fillStyle = "#fff"; ctx.font = "700 9px Inter, sans-serif"; ctx.textAlign = "center"; ctx.fillText("ESP", n.x, n.y + 3); }
       else if (n.kind === "cloud" || n.kind === "cmd") { ctx.beginPath(); ctx.roundRect(n.x - 34, n.y - 16, 68, 32, 8); ctx.fill(); ctx.stroke(); }
       else if (n.kind === "sat") { ctx.fillRect(n.x - 12, n.y - 6, 24, 12); ctx.strokeRect(n.x - 12, n.y - 6, 24, 12); ctx.fillRect(n.x - 30, n.y - 3, 14, 6); ctx.fillRect(n.x + 16, n.y - 3, 14, 6); }
-      else { ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+      else { if (n.kind === "phone" && n.alive && !n.fill) { const g = ctx.createRadialGradient(n.x - 4, n.y - 5, 2, n.x, n.y, n.r + 2); g.addColorStop(0, "#6aa5f0"); g.addColorStop(1, "#1f57b0"); ctx.fillStyle = g; } ctx.beginPath(); ctx.arc(n.x, n.y, n.r + (hot ? 2 : 0), 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
       if (!n.alive) { ctx.strokeStyle = red; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(n.x - 8, n.y - 8); ctx.lineTo(n.x + 8, n.y + 8); ctx.moveTo(n.x + 8, n.y - 8); ctx.lineTo(n.x - 8, n.y + 8); ctx.stroke(); }
       ctx.globalAlpha = 1;
       if (n.kind === "cloud" || n.kind === "cmd") { ctx.fillStyle = "#fff"; ctx.font = "700 11px Inter, sans-serif"; ctx.textAlign = "center"; ctx.fillText(n.label, n.x, n.y + 4); }
@@ -149,6 +160,12 @@
     });
   }
   function setControl(id, v) { E.C[id] = v; const el = $("c-" + id); if (!el) return; if (el.type === "checkbox") el.checked = !!v; else el.value = v; const vv = $("v-" + id); if (vv) vv.textContent = v + ((E.sc.controls.find(c => c.id === id) || {}).unit || ""); }
+  function renderTools() {
+    const box = $("tools"); const tools = (E.sc && E.sc.tools) || []; box.hidden = !tools.length;
+    box.innerHTML = tools.map(t => '<button type="button" class="tool' + (t.id === UI.tool ? " on" : "") + '" data-t="' + t.id + '" title="' + (t.tip || "") + '">' + t.label + "</button>").join("");
+    box.querySelectorAll("[data-t]").forEach(b => b.addEventListener("click", () => { UI.tool = b.dataset.t; renderTools(); if (E.sc.onTool) E.sc.onTool(UI.tool); }));
+    canvas.style.cursor = UI.tool === "move" ? "grab" : UI.tool === "wall" ? "crosshair" : UI.tool === "delete" ? "not-allowed" : "copy";
+  }
   let autoRun = false, stepAt = 0;
   function renderSteps() {
     $("steps").innerHTML = E.sc.steps.map((s, i) => '<i class="' + (i < E.step ? "done" : i === E.step ? "cur" : "") + '"></i>').join("");
@@ -162,6 +179,7 @@
     E.sc = sc; hint(sc.hint || "");
     $("sc-tier").textContent = sc.tier; $("sc-title").textContent = sc.title; $("sc-blurb").textContent = sc.blurb;
     document.querySelectorAll(".sc").forEach(b => b.classList.toggle("on", b.dataset.id === sc.id));
+    UI.drag = null; UI.hover = null; UI.tool = (sc.tools && sc.tools[0].id) || "move"; renderTools();
     renderControls(); sc.setup(); renderSteps(); renderMetrics(); logDirty = true;
     try { history.replaceState(null, "", "#" + sc.id); } catch (e) {}
   }
@@ -171,12 +189,102 @@
   // ============================================================
   const S = [];
 
+  // ---------- 0. Build your own mesh (free play) ----------
+  S.push({
+    id: "sandbox", group: "Try it yourself", tier: "Free play · drag, add, block", title: "Build your own mesh",
+    blurb: "Drag phones around. Add phones. Drop ESP32 relay boxes to bridge gaps. Draw walls — they block phone-to-phone links, but a relay's LoRa radio reaches over them. Links appear and disappear on their own. Send a message and watch the path it takes.",
+    hint: "Move: drag a phone. Pick a tool above to add phones, drop relays, draw walls, send a message, or remove things.",
+    intro: "Two groups of phones, too far apart to talk. Press <b>Start</b> for a guided tour, or just start dragging things.",
+    tools: [
+      { id: "move", label: "✥ Move", tip: "Drag phones and relays" },
+      { id: "phone", label: "+ Phone", tip: "Click on empty space to add a phone" },
+      { id: "esp", label: "◆ Relay (ESP32)", tip: "Click to drop a relay box — long-range LoRa radio" },
+      { id: "wall", label: "▬ Wall", tip: "Drag to draw a wall that blocks phone links" },
+      { id: "send", label: "➤ Send", tip: "Click a phone, then another phone" },
+      { id: "delete", label: "✕ Remove", tip: "Click a phone, relay or wall to remove it" }
+    ],
+    controls: [
+      { id: "wifi", type: "range", label: "Phone reach", min: 80, max: 260, step: 10, value: 150, unit: " m", desc: "How far one phone can talk to another. Walls block it." },
+      { id: "lora", type: "range", label: "Relay reach (LoRa)", min: 300, max: 900, step: 50, value: 650, unit: " m", desc: "How far two relay boxes can talk. Walls only shorten it." },
+      { id: "traffic", type: "switch", label: "Phones chat on their own", value: true },
+      { id: "acts", type: "buttons", buttons: [{ id: "clearWalls", label: "Clear walls" }, { id: "layout", label: "Reset layout" }] }
+    ],
+    st: {}, setup() {
+      const s = this.st; Object.assign(s, { walls: [], draft: null, pending: null, sent: 0, failed: 0, path: null, pathAt: 0, n: 0, acc: 0, groups: 1, pairs: 0 });
+      [["P1", 120, 220], ["P2", 210, 320], ["P3", 140, 420], ["P4", 340, 300], ["P5", 620, 300], ["P6", 740, 220], ["P7", 750, 390], ["P8", 850, 310]].forEach(p => node(p[0], p[1], p[2], "phone", p[0]));
+      s.n = 8; this.rebuild();
+    },
+    rangeOf(n) { return n.kind === "esp" ? E.C.lora : E.C.wifi; },
+    blocked(a, b) { return this.st.walls.some(w => segIntersect(a, b, { x: w.x1, y: w.y1 }, { x: w.x2, y: w.y2 })); },
+    rebuild() {
+      const s = this.st; E.links.length = 0; const ns = E.nodes;
+      for (let i = 0; i < ns.length; i++) for (let j = i + 1; j < ns.length; j++) {
+        const a = ns[i], b = ns[j]; const d = Math.hypot(a.x - b.x, a.y - b.y); const wall = this.blocked(a, b);
+        if (a.kind === "phone" && b.kind === "phone") { if (d < E.C.wifi && !wall) link(a.id, b.id, "wifi", { q: 1 - d / E.C.wifi }); }
+        else if (a.kind === "esp" && b.kind === "esp") { const R = wall ? E.C.lora * .6 : E.C.lora; if (d < R) link(a.id, b.id, "lora", { delay: 700, label: wall ? "over the wall" : "" }); }
+        else { if (d < 70 && !wall) link(a.id, b.id, "wifi", { delay: 60, q: 1 - d / 70 }); }   // phone ↔ relay: short hop, the phone attaches to the box
+      }
+      // connected groups + share of phone pairs that can talk
+      const phones = ns.filter(n => n.kind === "phone"); let pairs = 0, ok = 0; const seen = new Set(); let groups = 0;
+      phones.forEach(p => { if (!seen.has(p.id)) { groups++; reachable(p.id).forEach(x => seen.add(x)); } });
+      for (let i = 0; i < phones.length; i++) { const rs = reachable(phones[i].id); for (let j = i + 1; j < phones.length; j++) { pairs++; if (rs.has(phones[j].id)) ok++; } }
+      s.groups = groups; s.pairs = pairs ? Math.round(ok / pairs * 100) : 100;
+      E.nodes.forEach(n => { if (n.kind === "esp") n.sub = neighbors(n.id).some(x => byId[x].kind === "phone") ? "phone attached" : "no phone nearby"; });
+    },
+    onMove() { this.rebuild(); },
+    onControl(id) { const s = this.st; if (id === "clearWalls") { s.walls = []; log("Walls cleared", "sys"); } if (id === "layout") { const keep = E.C; load(this); Object.assign(E.C, keep); return; } this.rebuild(); },
+    onPointerDown(pt, n, tool) {
+      const s = this.st;
+      if (tool === "phone" && !n) { const id = "P" + (++s.n); node(id, pt.x, pt.y, "phone", id); log("Added phone " + id, "ok"); this.rebuild(); }
+      if (tool === "esp" && !n) { const id = "L" + (++s.n); node(id, pt.x, pt.y, "esp", id + " · relay"); log("Dropped relay box " + id + " — nearby phones attach to it; it reaches other relays over LoRa", "ok"); this.rebuild(); }
+      if (tool === "wall") s.draft = { x1: pt.x, y1: pt.y, x2: pt.x, y2: pt.y };
+      if (tool === "delete") { if (n) { removeNode(n.id); log("Removed " + n.id, "warn"); this.rebuild(); } else { const w = s.walls.find(w => segDist(pt, { x: w.x1, y: w.y1 }, { x: w.x2, y: w.y2 }) < 10); if (w) { s.walls.splice(s.walls.indexOf(w), 1); log("Wall removed", "warn"); this.rebuild(); } } }
+      if (tool === "send" && n && n.kind === "phone") this.onNodeClick(n);
+    },
+    onPointerMove(pt) { const s = this.st; if (s.draft) { s.draft.x2 = pt.x; s.draft.y2 = pt.y; } },
+    onPointerUp() { const s = this.st; if (s.draft) { if (Math.hypot(s.draft.x2 - s.draft.x1, s.draft.y2 - s.draft.y1) > 12) { s.walls.push(s.draft); log("Wall drawn — phone links through it are cut", "warn"); } s.draft = null; this.rebuild(); } },
+    onNodeClick(n) {
+      const s = this.st; if (UI.tool !== "send" || n.kind !== "phone") return;
+      if (!s.pending) { s.pending = n; E.nodes.forEach(x => { x.ring = null; }); n.ring = css("--gold"); log("From " + n.id + " — now click the phone it should reach", "sys"); return; }
+      if (s.pending === n) return; this.sendMsg(s.pending, n); s.pending.ring = null; s.pending = null;
+    },
+    sendMsg(a, b) {
+      const s = this.st; const path = bfs(a.id, b.id);
+      if (!path) { s.failed++; a.badge = "NO WAY THROUGH"; a.badgeColor = css("--red"); after(1800, () => { if (a.badge === "NO WAY THROUGH") a.badge = ""; }); log("No way from " + a.id + " to " + b.id + " — move a phone closer, or drop a relay in between", "bad"); return; }
+      s.path = path; s.pathAt = E.t; const hop = i => { if (i >= path.length - 1) { s.sent++; log(a.id + " → " + b.id + " delivered in " + (path.length - 1) + " hop" + (path.length > 2 ? "s" : "") + " via " + path.join(" → "), "ok"); return; } send(path[i], path[i + 1], { color: css("--gold"), r: 5, onArrive: () => hop(i + 1) }); }; hop(0);
+    },
+    tick(dt) {
+      const s = this.st; this.rebuild();
+      if (!E.C.traffic) return; s.acc += dt; if (s.acc < 2200) return; s.acc = rnd(0, 600);
+      const phones = E.nodes.filter(n => n.kind === "phone"); if (phones.length < 2) return;
+      const a = phones[Math.floor(Math.random() * phones.length)]; let b = phones[Math.floor(Math.random() * phones.length)]; if (a === b) return;
+      const path = bfs(a.id, b.id); if (!path) { s.failed++; return; }
+      const hop = i => { if (i >= path.length - 1) { s.sent++; return; } send(path[i], path[i + 1], { color: css("--green"), r: 3.5, onArrive: () => hop(i + 1) }); }; hop(0);
+    },
+    drawUnder(ctx) {
+      const s = this.st; const red = css("--red");
+      const wall = (w, draft) => { ctx.save(); ctx.lineCap = "round"; ctx.setLineDash(draft ? [6, 6] : []); ctx.strokeStyle = red; ctx.globalAlpha = draft ? .6 : .25; ctx.lineWidth = 14; ctx.beginPath(); ctx.moveTo(w.x1, w.y1); ctx.lineTo(w.x2, w.y2); ctx.stroke(); ctx.globalAlpha = 1; ctx.lineWidth = 3; ctx.stroke(); ctx.restore(); };
+      s.walls.forEach(w => wall(w, false)); if (s.draft) wall(s.draft, true);
+      if (s.walls.length) { ctx.fillStyle = red; ctx.font = "700 10px Inter, sans-serif"; ctx.textAlign = "center"; s.walls.forEach(w => ctx.fillText("WALL", (w.x1 + w.x2) / 2, (w.y1 + w.y2) / 2 - 12)); }
+      if (s.path && E.t - s.pathAt < 4000) { ctx.save(); ctx.globalAlpha = Math.max(0, 1 - (E.t - s.pathAt) / 4000) * .9; ctx.strokeStyle = css("--gold"); ctx.lineWidth = 9; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.shadowColor = css("--gold"); ctx.shadowBlur = 16; ctx.beginPath(); s.path.forEach((id, i) => { const n = byId[id]; if (!n) return; if (i) ctx.lineTo(n.x, n.y); else ctx.moveTo(n.x, n.y); }); ctx.stroke(); ctx.restore(); }
+    },
+    metrics() { const s = this.st; const phones = E.nodes.filter(n => n.kind === "phone").length, relays = E.nodes.filter(n => n.kind === "esp").length; return [{ label: "phones", value: phones }, { label: "relay boxes", value: relays }, { label: "walls", value: s.walls.length }, { label: "links", value: E.links.length }, { label: "separate groups", value: s.groups, cls: s.groups > 1 ? "warn" : "good" }, { label: "phones that can reach each other", value: s.pairs + " %", cls: s.pairs === 100 ? "good" : s.pairs < 50 ? "bad" : "warn", bar: s.pairs, barCls: s.pairs === 100 ? "green" : "amber" }, { label: "messages delivered", value: s.sent }, { label: "messages with no way through", value: s.failed, cls: s.failed ? "warn" : "" }]; },
+    steps: [
+      { text: "<b>Two groups, one gap.</b> The phones on the left can talk to each other, and so can the ones on the right — but not across the gap. Try it: pick the <b>Send</b> tool and click P4, then P5. No way through.", run() { UI.tool = "send"; renderTools(); } },
+      { text: "<b>Drag a phone into the gap.</b> Pick <b>Move</b> and drag P4 to the middle. When it gets within reach of both sides, links appear on their own and the two groups become one.", run() { UI.tool = "move"; renderTools(); const p = byId.P4; if (p) { p.x = 480; p.y = 300; E.sc.rebuild(); log("P4 moved to the middle — it now bridges the two groups", "ok"); } } },
+      { text: "<b>Or drop relay boxes.</b> A phone can't stay in the gap forever. Pick <b>Relay</b> and click near each group. A phone attaches to the box next to it, and the two boxes talk to each other over LoRa — much further than phones can.", run() { const p = byId.P4; if (p) { p.x = 340; p.y = 300; } node("L1", 380, 335, "esp", "L1 · relay"); node("L2", 585, 335, "esp", "L2 · relay"); E.sc.rebuild(); log("Two relay boxes dropped — LoRa bridge across the gap, P4 can go back", "ok"); } },
+      { text: "<b>Now a wall.</b> Pick <b>Wall</b> and drag a line between two phones that are linked, say P1 and P2. Their link is cut — a collapsed building, a ridge. The LoRa link between the boxes is not cut: long-range radio reaches over it (a bit shorter).", run() { E.sc.st.walls.push({ x1: 190, y1: 200, x2: 110, y2: 300 }); E.sc.rebuild(); log("Wall drawn between P1 and P2 — P1 is cut off", "warn"); } },
+      { text: "<b>Bridge the wall.</b> Drop a relay on each side of the wall, close to a phone. The phones attach, the boxes talk over the wall, and P1 is back in. That is the whole idea: when phones can't reach, put a box in between or up high.", run() { node("L3", 90, 260, "esp", "L3 · relay"); node("L4", 250, 270, "esp", "L4 · relay"); E.sc.rebuild(); log("Relays on both sides of the wall — P1 reconnected over LoRa", "ok"); } },
+      { text: "<b>Your turn.</b> Add phones, move them apart until links break, drop relays, draw walls, remove things, and send messages to see the path light up. The numbers on the right tell you how connected everyone is.", run() { UI.tool = "move"; renderTools(); } }
+    ]
+  });
+
   // ---------- 1. Leaderless cluster ----------
   S.push({
     id: "leaderless", group: "Phones talking to phones", tier: "Step 1 · a group with no leader", title: "A group of phones with no leader",
     blurb: "Seven phones find each other on their own and link to every phone nearby. No phone is the boss. Knock some out and the rest keep talking through whatever links are left.",
-    hint: "Click a phone to switch it off. Click again to switch it back on.",
-    intro: "The small green dots are location updates passing between phones. Press <b>Start</b> to see what happens when phones are lost.",
+    hint: "Drag phones to move them. Click a phone to switch it off; click again to switch it on.",
+    intro: "The small green dots are location updates passing between phones. Drag a phone and watch its links change. Press <b>Start</b> to see what happens when phones are lost.",
     controls: [
       { id: "range", type: "range", label: "How far a phone can reach", min: 180, max: 340, step: 10, value: 310, unit: " px", desc: "About 100–200 m in real life, less with walls in the way. Shorter reach = fewer links." },
       { id: "reset", type: "buttons", buttons: [{ id: "revive", label: "Switch everyone back on" }] }
@@ -187,6 +295,7 @@
       this.rebuild();
     },
     rebuild() { E.links.length = 0; meshByRange(E.nodes.map(n => n.id), E.C.range || 310, "wifi"); },
+    onMove() { this.rebuild(); }, rangeOf(n) { return n.kind === "phone" ? (E.C.range || 310) : 0; },
     onControl(id) { if (id === "range") { this.rebuild(); } if (id === "revive") { E.nodes.forEach(n => revive(n.id)); this.rebuild(); log("All phones are back on", "ok"); } },
     onNodeClick(n) {
       if (n.alive) { kill(n.id); log(n.id + " switched off — only its own links are lost", "bad"); }
@@ -228,6 +337,7 @@
       P.forEach(p => node(p[0], p[1], p[2], "phone", p[0])); meshByRange(P.map(p => p[0]), 235, "wifi");
       byId.A.ring = css("--gold"); byId.I.ring = css("--violet"); byId.A.sub = "source"; byId.I.sub = "destination";
     },
+    onMove() { E.links.length = 0; meshByRange(E.nodes.map(n => n.id), 235, "wifi"); }, rangeOf(n) { return 235; },
     onControl(id) { if (id === "sendAI") this.fire(); if (id === "clear") { E.packets.length = 0; E.nodes.forEach(n => { n.seen.clear(); n.badge = ""; }); Object.assign(this.st, { copies: 0, dup: 0, ttlDrop: 0, delivered: null, hops: null }); } },
     fire() {
       const s = this.st; E.nodes.forEach(n => { n.seen.clear(); n.badge = ""; }); Object.assign(s, { copies: 0, dup: 0, ttlDrop: 0, delivered: null, hops: null, sentAt: E.t, pid: "pkt-" + (++s.seq) });
@@ -685,11 +795,27 @@
     box.innerHTML = groups.map(g => '<div class="sc-group">' + g + "</div>" + S.filter(s => s.group === g).map(s => '<button type="button" class="sc" data-id="' + s.id + '"><b><span class="n">' + String(S.indexOf(s) + 1).padStart(2, "0") + "</span>" + s.title + "</b><span>" + s.tier + "</span></button>").join("")).join("");
     box.querySelectorAll(".sc").forEach(b => b.addEventListener("click", () => load(S.find(s => s.id === b.dataset.id))));
   }
-  canvas.addEventListener("click", ev => {
-    const r = canvas.getBoundingClientRect(); const x = (ev.clientX - r.left) / r.width * W, y = (ev.clientY - r.top) / r.height * H;
-    const n = E.nodes.find(n => Math.hypot(n.x - x, n.y - y) < 22);
-    if (n && E.sc && E.sc.onNodeClick) E.sc.onNodeClick(n);
+  // Pointer handling: drag nodes in every scenario; scenarios with tools get
+  // pointer down/move/up for adding things and drawing walls.
+  function ptOf(ev) { const r = canvas.getBoundingClientRect(); return { x: (ev.clientX - r.left) / r.width * W, y: (ev.clientY - r.top) / r.height * H }; }
+  function hitNode(pt) { return E.nodes.find(n => Math.hypot(n.x - pt.x, n.y - pt.y) < (n.kind === "cloud" || n.kind === "cmd" ? 34 : 22)); }
+  canvas.addEventListener("pointerdown", ev => {
+    if (ev.button !== 0) return; const pt = ptOf(ev); const n = hitNode(pt); UI.pt = pt;
+    if (n && UI.tool === "move" && E.sc.draggable !== false) { UI.drag = { node: n, dx: n.x - pt.x, dy: n.y - pt.y, moved: 0, sx: pt.x, sy: pt.y }; canvas.setPointerCapture(ev.pointerId); canvas.style.cursor = "grabbing"; return; }
+    if (E.sc.onPointerDown) E.sc.onPointerDown(pt, n, UI.tool);
   });
+  canvas.addEventListener("pointermove", ev => {
+    const pt = ptOf(ev); UI.pt = pt;
+    if (UI.drag) { const n = UI.drag.node; n.x = Math.max(20, Math.min(W - 20, pt.x + UI.drag.dx)); n.y = Math.max(20, Math.min(H - 20, pt.y + UI.drag.dy)); UI.drag.moved = Math.hypot(pt.x - UI.drag.sx, pt.y - UI.drag.sy); if (E.sc.onMove) E.sc.onMove(n); return; }
+    UI.hover = hitNode(pt); if (E.sc.onPointerMove) E.sc.onPointerMove(pt, UI.tool);
+  });
+  function endDrag(ev) {
+    const pt = UI.pt;
+    if (UI.drag) { const d = UI.drag; UI.drag = null; canvas.style.cursor = "grab"; if (d.moved < 4 && E.sc.onNodeClick) E.sc.onNodeClick(d.node); else if (E.sc.onDrop) E.sc.onDrop(d.node); return; }
+    if (E.sc.onPointerUp) E.sc.onPointerUp(pt, UI.tool);
+  }
+  canvas.addEventListener("pointerup", endDrag); canvas.addEventListener("pointercancel", endDrag);
+  canvas.addEventListener("pointerleave", () => { UI.hover = null; });
   $("btn-next").addEventListener("click", nextStep);
   $("btn-reset").addEventListener("click", () => load(E.sc));
   $("auto-run").addEventListener("change", ev => { autoRun = ev.target.checked; if (autoRun && E.step < 0) nextStep(); });
