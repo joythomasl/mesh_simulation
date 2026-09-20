@@ -19,9 +19,9 @@
   const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
   // ---------------- Engine ----------------
-  const E = { nodes: [], links: [], packets: [], t: 0, speed: 1, paused: false, log: [], sc: null, C: {}, step: -1, timers: [] };
+  const E = { nodes: [], links: [], packets: [], t: 0, speed: 3, paused: false, log: [], sc: null, C: {}, step: -1, timers: [] };
   const byId = {};
-  function node(id, x, y, kind, label, extra) { const n = Object.assign({ id, x, y, kind, label: label || id, alive: true, seen: new Set(), badge: "", ring: null, r: kind === "phone" ? 13 : 12 }, extra || {}); E.nodes.push(n); byId[id] = n; return n; }
+  function node(id, x, y, kind, label, extra) { const n = Object.assign({ id, x, y, kind, label: label || id, alive: true, seen: new Set(), badge: "", ring: null, r: kind === "phone" ? 16 : 14 }, extra || {}); E.nodes.push(n); byId[id] = n; return n; }
   function link(a, b, kind, opts) { const l = Object.assign({ a, b, kind: kind || "wifi", delay: kind === "lora" ? 900 : kind === "sat" ? 30000 : kind === "net" ? 120 : 45, loss: 0, up: true }, opts || {}); E.links.push(l); return l; }
   function linkBetween(a, b) { return E.links.find(l => (l.a === a && l.b === b) || (l.a === b && l.b === a)); }
   function neighbors(id) { const n = byId[id]; if (!n || !n.alive) return []; return E.links.filter(l => l.up && (l.a === id || l.b === id)).map(l => l.a === id ? l.b : l.a).filter(o => byId[o] && byId[o].alive); }
@@ -88,6 +88,43 @@
 
   const COL = { wifi: () => css("--green"), lora: () => css("--amber"), sat: () => css("--violet"), net: () => css("--blue"), ble: () => css("--blue") };
 
+  // ---------------- Icons ----------------
+  // A phone: rounded body, lit screen, speaker slot. Colour follows n.fill when a scenario sets one.
+  function drawPhone(ctx, n, hot, paper, ink3) {
+    const w = hot ? 22 : 20, h = hot ? 36 : 33, x = n.x - w / 2, y = n.y - h / 2;
+    ctx.save();
+    ctx.fillStyle = n.alive ? (n.fill || "#1b2a3e") : ink3; ctx.strokeStyle = paper; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(x, y, w, h, 5); ctx.fill(); ctx.stroke();
+    if (n.alive) {
+      const g = ctx.createLinearGradient(x, y, x + w, y + h); g.addColorStop(0, n.fill ? "#ffffff88" : "#6aa5f0"); g.addColorStop(1, n.fill ? "#ffffff22" : "#2a6fd6");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.roundRect(x + 3, y + 5, w - 6, h - 11, 2); ctx.fill();
+      // signal bars on the screen
+      ctx.fillStyle = "rgba(255,255,255,.85)"; [2, 4, 6, 8].forEach((bh, i) => ctx.fillRect(x + 5 + i * 3, y + 14 - bh, 2, bh));
+      ctx.fillStyle = "rgba(255,255,255,.55)"; ctx.fillRect(x + w / 2 - 3, y + 2, 6, 1.5);   // speaker
+      ctx.fillStyle = "rgba(255,255,255,.6)"; ctx.beginPath(); ctx.arc(n.x, y + h - 3.5, 1.6, 0, Math.PI * 2); ctx.fill();   // home button
+    }
+    ctx.restore();
+  }
+  // An ESP32 + LoRa board: green PCB, gold pads, a chip, and an antenna with a little radio arc.
+  function drawEsp(ctx, n, hot, paper, ink3) {
+    const w = hot ? 34 : 30, h = hot ? 22 : 20, x = n.x - w / 2, y = n.y - h / 2 + 4;
+    ctx.save();
+    ctx.fillStyle = n.alive ? "#2f7d4f" : ink3; ctx.strokeStyle = paper; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(x, y, w, h, 3); ctx.fill(); ctx.stroke();
+    if (n.alive) {
+      ctx.fillStyle = "#d9b14a"; for (let i = 0; i < 6; i++) { ctx.fillRect(x + 3 + i * 4.5, y + 1.5, 2, 2.5); ctx.fillRect(x + 3 + i * 4.5, y + h - 4, 2, 2.5); }   // pads
+      ctx.fillStyle = "#1a1f24"; ctx.fillRect(x + 5, y + 6, 11, 8);   // ESP32 chip
+      ctx.fillStyle = "#c33"; ctx.fillRect(x + 19, y + 7, 7, 6);      // LoRa module
+      ctx.fillStyle = "#e6ecef"; ctx.font = "700 5px Inter, sans-serif"; ctx.textAlign = "left"; ctx.fillText("ESP32", x + 5.5, y + 12);
+      // antenna
+      const ax = x + w - 4, ay = y;
+      ctx.strokeStyle = "#e6ecef"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ax, ay - 11); ctx.stroke();
+      ctx.fillStyle = "#e6ecef"; ctx.beginPath(); ctx.arc(ax, ay - 12, 2, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "#E2B54D"; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.arc(ax, ay - 12, 6, -2.3, -0.8); ctx.stroke(); ctx.beginPath(); ctx.arc(ax, ay - 12, 10, -2.3, -0.8); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   // ---------------- Rendering ----------------
   function draw() {
     const ink = css("--ink"), ink2 = css("--ink-2"), ink3 = css("--ink-3"), paper = css("--paper"), red = css("--red"), gold = css("--gold");
@@ -126,14 +163,15 @@
     E.nodes.forEach(n => {
       ctx.globalAlpha = n.alive ? 1 : .5;
       const hot = n === focus;
-      if (n.alive && (n.kind === "phone" || n.kind === "esp")) { ctx.save(); ctx.shadowColor = n.kind === "esp" ? gold : "#2a6fd6"; ctx.shadowBlur = hot ? 22 : 10; ctx.beginPath(); ctx.arc(n.x, n.y, n.r + (hot ? 2 : 0), 0, Math.PI * 2); ctx.fillStyle = "rgba(0,0,0,0.01)"; ctx.fill(); ctx.restore(); }
+      if (n.alive && (n.kind === "phone" || n.kind === "esp")) { ctx.save(); ctx.shadowColor = n.kind === "esp" ? gold : "#2a6fd6"; ctx.shadowBlur = hot ? 26 : 12; ctx.beginPath(); ctx.arc(n.x, n.y, n.r + (hot ? 2 : 0), 0, Math.PI * 2); ctx.fillStyle = "rgba(0,0,0,0.01)"; ctx.fill(); ctx.restore(); }
       if (n.ring) { ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 7, 0, Math.PI * 2); ctx.strokeStyle = n.ring; ctx.lineWidth = 2.5; ctx.stroke(); }
       ctx.fillStyle = n.alive ? (n.fill || (n.kind === "phone" ? "#2a6fd6" : n.kind === "esp" ? gold : n.kind === "cloud" ? css("--blue") : n.kind === "cmd" ? css("--gold-2") : n.kind === "sensor" ? css("--violet") : "#888")) : ink3;
       ctx.strokeStyle = paper; ctx.lineWidth = 2;
-      if (n.kind === "esp") { const g = ctx.createLinearGradient(n.x - 10, n.y - 10, n.x + 10, n.y + 10); g.addColorStop(0, "#E2B54D"); g.addColorStop(1, "#9A6F12"); ctx.fillStyle = n.alive ? g : ink3; ctx.save(); ctx.translate(n.x, n.y); ctx.rotate(Math.PI / 4); const k = hot ? 12 : 10; ctx.fillRect(-k, -k, 2 * k, 2 * k); ctx.strokeRect(-k, -k, 2 * k, 2 * k); ctx.restore(); ctx.fillStyle = "#fff"; ctx.font = "700 9px Inter, sans-serif"; ctx.textAlign = "center"; ctx.fillText("ESP", n.x, n.y + 3); }
+      if (n.kind === "esp") drawEsp(ctx, n, hot, paper, ink3);
       else if (n.kind === "cloud" || n.kind === "cmd") { ctx.beginPath(); ctx.roundRect(n.x - 34, n.y - 16, 68, 32, 8); ctx.fill(); ctx.stroke(); }
       else if (n.kind === "sat") { ctx.fillRect(n.x - 12, n.y - 6, 24, 12); ctx.strokeRect(n.x - 12, n.y - 6, 24, 12); ctx.fillRect(n.x - 30, n.y - 3, 14, 6); ctx.fillRect(n.x + 16, n.y - 3, 14, 6); }
-      else { if (n.kind === "phone" && n.alive && !n.fill) { const g = ctx.createRadialGradient(n.x - 4, n.y - 5, 2, n.x, n.y, n.r + 2); g.addColorStop(0, "#6aa5f0"); g.addColorStop(1, "#1f57b0"); ctx.fillStyle = g; } ctx.beginPath(); ctx.arc(n.x, n.y, n.r + (hot ? 2 : 0), 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+      else if (n.kind === "phone") drawPhone(ctx, n, hot, paper, ink3);
+      else { ctx.beginPath(); ctx.arc(n.x, n.y, n.r + (hot ? 2 : 0), 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
       if (!n.alive) { ctx.strokeStyle = red; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(n.x - 8, n.y - 8); ctx.lineTo(n.x + 8, n.y + 8); ctx.moveTo(n.x + 8, n.y - 8); ctx.lineTo(n.x - 8, n.y + 8); ctx.stroke(); }
       ctx.globalAlpha = 1;
       if (n.kind === "cloud" || n.kind === "cmd") { ctx.fillStyle = "#fff"; ctx.font = "700 11px Inter, sans-serif"; ctx.textAlign = "center"; ctx.fillText(n.label, n.x, n.y + 4); }
