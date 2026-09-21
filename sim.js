@@ -281,7 +281,7 @@
     controls: [
       { id: "wifi", type: "range", label: "Phone reach (Wi-Fi Aware)", min: 50, max: 200, step: 10, value: 150, unit: " m", desc: "Phone to phone: about 100–200 m outdoors, less with obstacles. Walls block it." },
       { id: "attach", type: "range", label: "Relay-to-phone reach (ESP32 hotspot)", min: 30, max: 150, step: 10, value: 100, unit: " m", desc: "The ESP32's Wi-Fi hotspot reaches about 100 m outdoors. Boxes are mounted high, so a wall does not cut this link." },
-      { id: "lora", type: "range", label: "Relay-to-relay reach (ESP32 LoRa)", min: 500, max: 5000, step: 100, value: 2000, unit: " m", desc: "LoRa between two ESP32 boxes: typically 2–5 km with a clear line of sight. This map is only about 1 km wide, so at the default every box reaches every other box." },
+      { id: "lora", type: "range", label: "Relay-to-relay reach (ESP32 LoRa)", min: 500, max: 5000, step: 100, value: 2000, unit: " m", desc: "LoRa between two ESP32 boxes on 865–868 MHz at up to 500 mW e.r.p. (Table II of India's 2021 rules): typically 2–5 km with a clear line of sight. This map is only about 1 km wide, so at the default every box reaches every other box." },
       { id: "traffic", type: "switch", label: "Phones chat on their own", value: true },
       { id: "acts", type: "buttons", buttons: [{ id: "clearWalls", label: "Clear walls" }, { id: "layout", label: "Reset layout" }] }
     ],
@@ -564,55 +564,102 @@
     ]
   });
 
-  // ---------- 5. LoRa airtime ----------
-  function loraAirtime(bytes, sf) { const bw = 125000, cr = 1, de = sf >= 11 ? 1 : 0; const ts = Math.pow(2, sf) / bw; const pre = (8 + 4.25) * ts; const ps = 8 + Math.max(Math.ceil((8 * bytes - 4 * sf + 28 + 16) / (4 * (sf - 2 * de))) * (cr + 4), 0); return (pre + ps * ts) * 1000; }
+  // ---------- 5. LoRa under India's 2021 rules ----------
+  // Time on air, Semtech SX126x formula (explicit header, CRC on, 8-symbol preamble, CR 4/5).
+  function loraAirtime(bytes, sf, bw) { bw = bw || 125000; const cr = 1, de = sf >= 11 ? 1 : 0; const ts = Math.pow(2, sf) / bw; const pre = (8 + 4.25) * ts; const ps = 8 + Math.max(Math.ceil((8 * bytes - 4 * sf + 28 + 16) / (4 * (sf - 2 * de))) * (cr + 4), 0); return (pre + ps * ts) * 1000; }
+  // G.S.R. 853(E), 10 Dec 2021 — 865–868 MHz licence-exempt short-range devices.
+  const REG = {
+    t1:    { name: "Table I · general data", duty: 0.01,  power: "25 mW e.r.p.",  bwMax: 0,      note: "the old 1 % assumption" },
+    t2node:{ name: "Table II · tracking & data · ordinary node", duty: 0.025, power: "500 mW e.r.p.", bwMax: 200000, note: "2.5 % for a node that only sends its own data" },
+    t2ap:  { name: "Table II · tracking & data · network access point", duty: 0.10, power: "500 mW e.r.p.", bwMax: 200000, note: "10 % for a box that forwards traffic for others — every relay box in this design" },
+    lic:   { name: "Licensed public-safety spectrum", duty: 1.0, power: "per licence", bwMax: 0, note: "for a real deployment by NDRF / SDRF / police; limits are set by the licence, not the SRD table" }
+  };
   S.push({
-    id: "lora", group: "Linking groups with LoRa radios", tier: "Step 2 · the LoRa radio link", title: "The LoRa link: slow, so use it carefully",
-    blurb: "Two groups of phones, each with a small LoRa radio box that links them over a long distance. Every message sent over LoRa uses up shared air time, and the rules only allow about 36 seconds of sending per hour. The 'range setting' decides how long each message takes on air.",
-    hint: "Change the range setting and how often phones report. Raise an SOS while the radio is busy.",
-    intro: "Each phone reports its location on the timer you set. The gateway phone passes it to the radio box, which sends it to the command centre. Press <b>Start</b>.",
+    id: "lora", group: "Linking groups with LoRa radios", tier: "Step 2 · the LoRa radio link", title: "The LoRa link under India's 2021 rules",
+    blurb: "Two groups of phones, each with an ESP32 radio box. LoRa on 865–868 MHz is licence-free in India, but the 2021 rules (G.S.R. 853(E)) limit how much of each hour a box may transmit. Most guides quote a flat 1 %. Pick the right category and the right settings, and the same radio legally carries ten to thirty times more.",
+    hint: "Change the category, the spreading factor, the report size and the bandwidth. Raise an SOS while the radio is busy.",
+    intro: "Each phone reports its location on the timer you set. The gateway phone hands it to the radio box, which sends it to the command centre over LoRa. Press <b>Start</b> to begin with the old 1 % assumption.",
     controls: [
-      { id: "sf", type: "select", label: "Range setting", value: 9, options: [[7, "Short range — fast"], [9, "Medium range — normal"], [12, "Long range — very slow, emergencies only"]] },
+      { id: "cat", type: "select", label: "Regulatory category (G.S.R. 853(E))", value: "t2ap", options: [["t1", "Table I · general data · 1 % · 25 mW"], ["t2node", "Table II · tracking · ordinary node · 2.5 % · 500 mW"], ["t2ap", "Table II · tracking · network access point · 10 % · 500 mW"], ["lic", "Licensed public-safety spectrum · no duty limit"]], desc: "Table II covers tracking, tracing and data acquisition — including emergency detection of buried victims. Our boxes forward traffic for others, so they are network access points." },
+      { id: "sf", type: "select", label: "Spreading factor", value: "auto", options: [["auto", "Adaptive — lowest SF the link allows (with APC)"], [7, "SF7 — fixed"], [9, "SF9 — fixed"], [12, "SF12 — fixed, contingency"]], desc: "SF7 costs about a third of SF9 on air and a twenty-third of SF12. Adaptive SF and adaptive power come from the same link-margin measurement." },
+      { id: "pkt", type: "select", label: "Position report", value: 164, options: [[164, "164 B — full signature on every report"], [76, "76 B — compact, batch-signed (routine only)"], [96, "96 B — one summary per group"]], desc: "Keep the 64-byte signature on SOS and commands. Routine positions can be batch-signed, delta-coded and use ID codes instead of names." },
+      { id: "bw", type: "select", label: "Bandwidth", value: 125, options: [[125, "125 kHz — allowed (≤ 200 kHz)"], [250, "250 kHz — faster, but not allowed under Table II"]] },
       { id: "interval", type: "range", label: "How often phones report", min: 2, max: 60, value: 10, unit: " s" },
-      { id: "bytes", type: "range", label: "Size of one report", min: 48, max: 240, step: 8, value: 164, unit: " bytes", desc: "A LoRa message can carry at most about 240 bytes." },
-      { id: "summary", type: "switch", label: "Send one group summary instead", value: false, desc: "The gateway combines its group's locations into one small (96 byte) message per timer." },
-      { id: "sos", type: "buttons", buttons: [{ id: "raiseSOS", label: "Raise SOS", cls: "danger" }] }
+      { id: "ledger", type: "switch", label: "Airtime ledger by priority (SOS 30 % reserved)", value: true, desc: "SOS 30 % · commands 30 % · positions 30 % · bulk 10 % of the hour's budget, so telemetry can never eat the SOS slice." },
+      { id: "sos", type: "buttons", buttons: [{ id: "raiseSOS", label: "Raise SOS (176 B)", cls: "danger" }] }
     ],
     st: {}, setup() {
-      const s = this.st; Object.assign(s, { busy: [], q: [], sent: 0, coal: 0, sosLat: null, sosAt: null, acc: {}, chanFree: 0, dropped: 0 });
-      ring(190, 300, 5, 110).forEach((p, i) => node("A" + (i + 1), p[0], p[1], "phone", "A" + (i + 1))); node("L1", 330, 300, "esp", "L1 · bridge");
-      ring(620, 300, 5, 110).forEach((p, i) => node("B" + (i + 1), p[0], p[1], "phone", "B" + (i + 1))); node("L2", 760, 300, "esp", "L2 · bridge");
+      const s = this.st; Object.assign(s, { busy: [], q: [], sent: 0, coal: 0, sosLat: null, sosAt: null, acc: {}, chanFree: 0, refused: 0, used: { 0: 0, 1: 0, 2: 0, 3: 0 }, holdLog: 0, bwSaid: false, ledgerHits: 0 });
+      ring(190, 300, 5, 110).forEach((p, i) => node("A" + (i + 1), p[0], p[1], "phone", "A" + (i + 1))); node("L1", 330, 300, "esp", "L1 · box");
+      ring(660, 300, 5, 110).forEach((p, i) => node("B" + (i + 1), p[0], p[1], "phone", "B" + (i + 1))); node("L2", 800, 300, "esp", "L2 · box");
       node("EOC", 900, 120, "cmd", "EOC");
       meshByRange(["A1", "A2", "A3", "A4", "A5"], 170); meshByRange(["B1", "B2", "B3", "B4", "B5"], 170);
-      link("A2", "L1", "wifi", { label: "AP" }); link("B2", "L2", "wifi", { label: "AP" }); link("L1", "L2", "lora", { label: "LoRa 865–867 MHz", ly: -26 }); link("L2", "EOC", "net", { label: "backhaul" });
-      byId.A2.badge = "GATEWAY"; byId.B2.badge = "GATEWAY";
+      link("A2", "L1", "wifi", { label: "hotspot" }); link("B2", "L2", "wifi", { label: "hotspot" }); link("L1", "L2", "lora", { label: "LoRa 865–868 MHz · 125 kHz", ly: -26 }); link("L2", "EOC", "net", { label: "backhaul" });
+      byId.A2.badge = "GATEWAY"; byId.B2.badge = "GATEWAY"; this.roleBadge();
     },
-    onControl(id) { if (id === "raiseSOS") { const s = this.st; s.sosAt = E.t; this.enqueue({ kind: "SOS", bytes: 176, from: "A4", pri: 0 }); byId.A4.ring = css("--red"); log("A4 raises an SOS — it goes straight to the front of the line", "bad", "A4"); } },
-    enqueue(m) { const s = this.st; if (m.pri === 0) s.q.unshift(m); else { if (E.C.summary || s.q.filter(x => x.pri === 2).length > 6) { const i = s.q.findIndex(x => x.pri === 2 && x.from === m.from); if (i >= 0) { s.q[i] = m; s.coal++; return; } } s.q.push(m); } },
+    reg() { return REG[E.C.cat] || REG.t2ap; },
+    sfNow() { return E.C.sf === "auto" ? 7 : +E.C.sf; },   // the L1–L2 link has margin to spare, so adaptive picks SF7
+    bwOk() { const r = this.reg(); return !r.bwMax || (+E.C.bw) * 1000 <= r.bwMax; },
+    roleBadge() { const r = this.reg(); byId.L1.badge = (r.duty >= 1 ? "LICENSED" : (r.duty * 100) + " % · " + r.power); byId.L1.badgeColor = r.duty >= 0.1 ? css("--green") : r.duty >= 0.025 ? css("--amber") : css("--red"); byId.L2.badge = byId.L1.badge; byId.L2.badgeColor = byId.L1.badgeColor; },
+    onControl(id, v) {
+      const s = this.st;
+      if (id === "raiseSOS") { s.sosAt = E.t; this.enqueue({ kind: "SOS", bytes: 176, from: "A4", pri: 0 }); byId.A4.ring = css("--red"); log("A4 raises an SOS — it uses the reserved SOS slice and goes to the front of the line", "bad", "A4"); }
+      if (id === "cat") { const r = this.reg(); this.roleBadge(); log("Category: " + r.name + " — " + (r.duty >= 1 ? "no duty-cycle limit" : (r.duty * 100) + " % of each hour on air") + ", " + r.power + ". " + r.note, "sys", "L1"); s.bwSaid = false; }
+      if (id === "sf") log(E.C.sf === "auto" ? "Adaptive SF: the L1–L2 link has margin to spare, so the boxes step down to SF7 and turn transmit power down (APC)" : "SF fixed at " + E.C.sf, "sys", "L1");
+      if (id === "pkt") log("Position report is now " + E.C.pkt + " B (" + (E.C.pkt === 164 ? "signed individually" : E.C.pkt === 76 ? "compact, signed in batches" : "one summary per group") + ")", "sys", "A2");
+      if (id === "bw") { s.bwSaid = false; if (!this.bwOk()) log("250 kHz is not permitted under Table II (≤ 200 kHz). The box refuses to transmit until bandwidth is back at 125 kHz.", "bad", "L1"); else log("Bandwidth locked to 125 kHz — allowed", "ok", "L1"); }
+      if (id === "ledger") log(v ? "Airtime ledger on: SOS 30 % · commands 30 % · positions 30 % · bulk 10 %" : "Ledger off: first come, first served — telemetry can eat the whole budget", v ? "ok" : "warn", "L1");
+    },
+    enqueue(m) { const s = this.st; if (m.pri === 0) s.q.unshift(m); else { const i = s.q.findIndex(x => x.pri === 2 && x.from === m.from); if (i >= 0) { s.q[i] = m; s.coal++; return; } s.q.push(m); } },
     tick(dt) {
       const s = this.st; const win = 60000; s.busy = s.busy.filter(b => b.end > E.t - win);
+      const r = this.reg(); const sf = this.sfNow();
       // sources
-      ["A1", "A3", "A4", "A5"].forEach(id => { s.acc[id] = (s.acc[id] || 0) + dt; if (s.acc[id] >= E.C.interval * 1000) { s.acc[id] = 0; send(id, "A2", { color: css("--green"), r: 4, onArrive: () => { if (E.C.summary) { s.pendingSummary = (s.pendingSummary || 0) + 1; } else this.enqueue({ kind: "POS", bytes: E.C.bytes, from: id, pri: 2 }); } }); } });
-      if (E.C.summary) { s.sumAcc = (s.sumAcc || 0) + dt; if (s.sumAcc >= E.C.interval * 1000) { s.sumAcc = 0; if (s.pendingSummary) { this.enqueue({ kind: "SUMMARY×" + s.pendingSummary, bytes: 96, from: "A2", pri: 2 }); s.pendingSummary = 0; } } }
-      // channel
-      const dutyNow = s.busy.reduce((a, b) => a + (Math.min(b.end, E.t) - Math.max(b.start, E.t - win)), 0) / win;
-      s.duty = dutyNow;
+      ["A1", "A3", "A4", "A5"].forEach(id => { s.acc[id] = (s.acc[id] || 0) + dt; if (s.acc[id] >= E.C.interval * 1000) { s.acc[id] = 0; send(id, "A2", { color: css("--green"), r: 4, onArrive: () => { if (+E.C.pkt === 96) { s.pendingSummary = (s.pendingSummary || 0) + 1; } else this.enqueue({ kind: "POS", bytes: +E.C.pkt, from: id, pri: 2 }); } }); } });
+      if (+E.C.pkt === 96) { s.sumAcc = (s.sumAcc || 0) + dt; if (s.sumAcc >= E.C.interval * 1000) { s.sumAcc = 0; if (s.pendingSummary) { this.enqueue({ kind: "SUM×" + s.pendingSummary, bytes: 96, from: "A2", pri: 2 }); s.pendingSummary = 0; } } }
+      // ledger: air time used in the window, per priority
+      const usedBy = { 0: 0, 1: 0, 2: 0, 3: 0 }; s.busy.forEach(b => { usedBy[b.pri] += Math.min(b.end, E.t) - Math.max(b.start, E.t - win); });
+      const total = Object.values(usedBy).reduce((a, b) => a + b, 0); s.duty = total / win; s.usedBy = usedBy;
+      const limit = r.duty; const slice = { 0: 0.30, 1: 0.30, 2: 0.30, 3: 0.10 };
       if (s.chanFree <= E.t && s.q.length) {
-        const m = s.q[0]; const at = loraAirtime(m.bytes, E.C.sf);
-        const overBudget = dutyNow >= .01;
-        if (overBudget && m.pri !== 0) { // routine telemetry yields; keep only the latest sample per origin
-          const latest = {}; s.q.filter(x => x.pri === 2).forEach(x => { latest[x.from] = x; }); const before = s.q.length; s.q = s.q.filter(x => x.pri === 0 || latest[x.from] === x); s.coal += before - s.q.length; s.holdLog = (s.holdLog || 0) + dt; if (s.holdLog > 5000) { s.holdLog = 0; log("Air time used up — routine reports are held back; only the newest one per phone is kept", "warn", "L1"); } return; }
-        s.q.shift(); s.chanFree = E.t + at; s.busy.push({ start: E.t, end: E.t + at }); s.sent++;
-        send("L1", "L2", { color: m.pri === 0 ? css("--red") : css("--amber"), label: m.kind + " " + m.bytes + "B", dur: at, r: 6, onArrive: () => { send("L2", "EOC", { color: m.pri === 0 ? css("--red") : css("--amber"), r: 5, onArrive: () => { if (m.pri === 0 && s.sosAt != null) { s.sosLat = E.t - s.sosAt; s.sosAt = null; byId.A4.ring = null; log("SOS reached the command centre in " + fmtT(s.sosLat), "ok", "EOC"); } } }); } });
+        const m = s.q[0];
+        if (!this.bwOk()) { if (!s.bwSaid) { s.bwSaid = true; byId.L1.badge = "REFUSED · 250 kHz"; byId.L1.badgeColor = css("--red"); } if (!m.refused) { m.refused = true; s.refused++; } return; }
+        const at = loraAirtime(m.bytes, sf, +E.C.bw * 1000);
+        const allowedAll = s.duty < limit;
+        const allowedSlice = E.C.ledger ? (usedBy[m.pri] / win) < limit * slice[m.pri] : allowedAll;
+        if (limit < 1 && (!allowedAll || !allowedSlice)) {
+          if (m.pri !== 0) { const latest = {}; s.q.filter(x => x.pri === 2).forEach(x => { latest[x.from] = x; }); const before = s.q.length; s.q = s.q.filter(x => x.pri === 0 || latest[x.from] === x); s.coal += before - s.q.length; s.holdLog += dt; if (s.holdLog > 6000) { s.holdLog = 0; log((E.C.ledger ? "Position slice used up (" + (limit * 30) + " % of the hour)" : "Hour's air time used up (" + (limit * 100) + " %)") + " — routine reports held; newest kept per phone", "warn", "L1"); } return; }
+          if (!allowedAll && E.C.ledger && usedBy[0] / win < limit * slice[0]) { /* SOS slice still free — fall through and send */ } else { s.holdLog += dt; if (s.holdLog > 6000) { s.holdLog = 0; log("Even the SOS is waiting: the whole budget is spent and nothing was reserved", "bad", "L1"); } return; }
+        }
+        s.q.shift(); s.chanFree = E.t + at; s.busy.push({ start: E.t, end: E.t + at, pri: m.pri }); s.sent++; if (m.pri === 0 && E.C.ledger) s.ledgerHits++;
+        send("L1", "L2", { color: m.pri === 0 ? css("--red") : css("--amber"), label: m.kind + " " + m.bytes + "B · SF" + sf, dur: at, r: 6, onArrive: () => { send("L2", "EOC", { color: m.pri === 0 ? css("--red") : css("--amber"), r: 5, onArrive: () => { if (m.pri === 0 && s.sosAt != null) { s.sosLat = E.t - s.sosAt; s.sosAt = null; byId.A4.ring = null; log("SOS reached the command centre in " + fmtT(s.sosLat), "ok", "EOC"); } } }); } });
       }
+      if (this.bwOk() && byId.L1.badge.startsWith("REFUSED")) this.roleBadge();
     },
-    metrics() { const s = this.st; const at = loraAirtime(E.C.bytes, E.C.sf); const perHour = Math.floor(36000 / at); return [{ label: "air time for one report", value: (at / 1000).toFixed(3) + " s" }, { label: "reports allowed per hour", value: perHour, cls: perHour < 60 ? "bad" : "" }, { label: "air time used (last minute)", value: ((s.duty || 0) * 100).toFixed(2) + " % of 1 %", cls: (s.duty || 0) >= .01 ? "bad" : "good", bar: (s.duty || 0) * 10000, barCls: (s.duty || 0) >= .01 ? "red" : "green" }, { label: "messages waiting", value: s.q.length, cls: s.q.length > 8 ? "bad" : "" }, { label: "old reports replaced by newer", value: s.coal }, { label: "last SOS took", value: s.sosLat != null ? fmtT(s.sosLat) : "—", cls: s.sosLat > 10000 ? "bad" : s.sosLat ? "good" : "" }]; },
+    metrics() {
+      const s = this.st, r = this.reg(), sf = this.sfNow(); const bw = +E.C.bw * 1000; const at = loraAirtime(+E.C.pkt, sf, bw); const perHour = !this.bwOk() ? "not allowed" : r.duty >= 1 ? "no limit" : Math.floor(r.duty * 3600000 / at);
+      const used = s.duty || 0; const rel = r.duty >= 1 ? 0 : used / r.duty;
+      const p0 = s.usedBy ? s.usedBy[0] / 60000 : 0;
+      return [
+        { label: "band · bandwidth · power", value: "865–868 MHz · " + E.C.bw + " kHz · " + r.power + (E.C.sf === "auto" ? " · APC on" : ""), wide: true, cls: this.bwOk() ? "" : "bad" },
+        { label: "air time for one report", value: (at / 1000).toFixed(3) + " s · SF" + sf },
+        { label: "reports allowed per hour", value: perHour, cls: perHour === "not allowed" ? "bad" : perHour === "no limit" ? "good" : perHour < 100 ? "bad" : perHour < 500 ? "warn" : "good" },
+        { label: "air time used vs limit", value: r.duty >= 1 ? (used * 100).toFixed(2) + " % · no limit" : (used * 100).toFixed(2) + " % of " + (r.duty * 100) + " %", cls: rel >= 1 ? "bad" : rel > .7 ? "warn" : "good", bar: r.duty >= 1 ? used * 100 : rel * 100, barCls: rel >= 1 ? "red" : rel > .7 ? "amber" : "green" },
+        { label: "SOS slice used (30 % reserved)", value: E.C.ledger && r.duty < 1 ? Math.round(p0 / (r.duty * .3) * 100) + " %" : "—", bar: E.C.ledger && r.duty < 1 ? p0 / (r.duty * .3) * 100 : 0, barCls: "red" },
+        { label: "messages waiting", value: s.q.length, cls: s.q.length > 8 ? "bad" : "" },
+        { label: "old reports replaced by newer", value: s.coal },
+        { label: "refused (bandwidth not allowed)", value: s.refused, cls: s.refused ? "bad" : "" },
+        { label: "last SOS took", value: s.sosLat != null ? fmtT(s.sosLat) : "—", cls: s.sosLat > 10000 ? "bad" : s.sosLat ? "good" : "" }
+      ];
+    },
     steps: [
-      { text: "<b>Medium range, one report every 10 s from four phones.</b> Each report takes 0.84 s on air. The rules allow about 42 reports an hour — but four phones every 10 s would send 1,440. Watch the air-time gauge.", run() { } },
-      { text: "<b>The radio is full.</b> At the limit, the radio box holds routine reports back and keeps only the newest one per phone. The queue stops growing, but locations at the command centre get old. That is why the screen always shows how old a location is.", run() { setControl("interval", 4); } },
-      { text: "<b>Raise an SOS while it's full.</b> SOS messages have air time set aside for them. It goes to the front of the line and crosses in about a second.", run() { E.sc.onControl("raiseSOS"); } },
-      { text: "<b>Long range setting.</b> The same report now takes 6 seconds on air, and the hour's budget is six reports. Long range is paid for with very little capacity. Keep it for emergencies only.", run() { setControl("sf", 12); } },
-      { text: "<b>The fix: keep the chatter inside the group, send summaries out.</b> Frequent updates stay between the phones. The gateway sends one small summary of the whole group per timer. Air time drops well under the limit.", run() { setControl("sf", 9); setControl("summary", true); setControl("interval", 10); } }
+      { text: "<b>The old assumption.</b> Table I, 1 % of the hour, SF9, 164-byte reports. Each report takes 0.84 s on air, so a box gets about 42 an hour — and four phones every 10 s want 1,440. Watch the gauge fill and reports get held back.", run() { setControl("cat", "t1"); E.sc.onControl("cat"); setControl("sf", 9); setControl("pkt", 164); setControl("bw", 125); setControl("interval", 10); } },
+      { text: "<b>Lever 1 — the right category.</b> Our boxes track people, carry SOS and collect data, and forward for others: that is Table II, network access point. 10 % of the hour and 500 mW instead of 1 % and 25 mW. Same radio: about 428 reports an hour at SF9.", run() { setControl("cat", "t2ap"); E.sc.onControl("cat"); } },
+      { text: "<b>Lever 2 — the lowest spreading factor the link allows.</b> The L1–L2 link has margin to spare, so adaptive SF steps down to SF7 and adaptive power control (required by Table II) turns the transmitter down too. 0.27 s per report: about 1,350 an hour.", run() { setControl("sf", "auto"); E.sc.onControl("sf"); } },
+      { text: "<b>Lever 3 — shrink the routine report.</b> A 164-byte report spends most of its bytes on a per-report signature. Keep that on SOS and commands; batch-sign routine positions instead. 76 bytes: 0.14 s on air, about 2,600 an hour. The gauge stays low even at 10 s reports.", run() { setControl("pkt", 76); E.sc.onControl("pkt"); } },
+      { text: "<b>Lever 4 — spend the budget by priority.</b> Reports every 2 s from every phone would still fill the box. With the ledger, positions may only use their 30 % slice; the SOS slice is untouched. Raise an SOS now and it crosses immediately.", run() { setControl("interval", 2); E.sc.onControl("raiseSOS"); } },
+      { text: "<b>What does not work: wider bandwidth.</b> 250 kHz would halve the air time, but Table II allows at most 200 kHz. The box refuses to transmit. (Hopping channels does not help either: India treats 865–868 MHz as one band, so there is no per-channel budget.)", run() { setControl("bw", 250); E.sc.onControl("bw"); } },
+      { text: "<b>Back to 125 kHz — and the real way past the limits.</b> For a deployment by NDRF, SDRF or police, the LoRa tier can move to licensed public-safety spectrum; duty cycle is then set by the licence. The hardware is unchanged. The prototype stays fully inside the licence-exempt rules.", run() { setControl("bw", 125); E.sc.onControl("bw"); setControl("cat", "lic"); E.sc.onControl("cat"); setControl("interval", 10); } }
     ]
   });
 
