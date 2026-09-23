@@ -79,6 +79,31 @@ h1{font-size:19px;font-weight:800;margin:2px 0 3px;letter-spacing:-.01em}
 .tool:hover{color:var(--ink);background:var(--raised)}
 .tool.on{background:var(--gold);color:#1a1a1a;border-color:var(--gold)}
 .canvas-wrap canvas{touch-action:none}
+/* "What's happening" — the story, on the picture, so the eye never has to
+   leave the canvas to follow along. */
+.now{position:absolute;right:12px;top:10px;width:296px;max-width:44%;z-index:4;pointer-events:none;
+  background:color-mix(in srgb,var(--paper) 92%,transparent);border:1px solid var(--line);border-left:4px solid var(--gold);
+  border-radius:10px;box-shadow:var(--shadow);overflow:hidden}
+.now:empty{display:none}
+.now .now-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 10px;
+  background:var(--gold-soft);border-bottom:1px solid var(--line);
+  font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--gold-2)}
+.now .now-hd .step{font-family:var(--mono);letter-spacing:0;text-transform:none;color:var(--ink-2);font-weight:600}
+.now .now-hd .lbl{display:flex;align-items:center;gap:7px;min-width:0}
+.now .now-hd .dot{width:7px;height:7px;border-radius:50%;background:var(--green);flex:none;
+  animation:now-blink 1.6s ease-in-out infinite}
+@keyframes now-blink{0%,100%{opacity:1}50%{opacity:.25}}
+.now .now-ev{display:grid;grid-template-columns:44px 1fr;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line);
+  font-size:11.5px;line-height:1.35;color:var(--ink-2)}
+.now .now-ev:last-child{border-bottom:0}
+.now .now-ev .t{font-family:var(--mono);font-size:10.5px;color:var(--ink-3)}
+.now .now-ev .m{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.now .now-ev.new{background:var(--gold-soft);color:var(--ink);font-weight:600}
+.now .now-ev.ok{color:var(--green)}.now .now-ev.bad{color:var(--red)}
+.now .now-ev.warn{color:var(--amber)}.now .now-ev.sys{color:var(--gold-2)}
+.now .now-ev.old{opacity:.6}
+.now .now-empty{padding:8px 10px;font-size:11.5px;color:var(--ink-3)}
+
 .hint{position:absolute;left:12px;bottom:10px;font-size:11.5px;color:var(--ink-2);background:color-mix(in srgb,var(--paper) 85%,transparent);border:1px solid var(--line);border-radius:6px;padding:4px 8px;pointer-events:none}
 .hint:empty{display:none}
 
@@ -174,6 +199,7 @@ h1{font-size:19px;font-weight:800;margin:2px 0 3px;letter-spacing:-.01em}
   .log{height:200px}
   .narration{grid-template-columns:1fr}
   .play-cta{width:100%;justify-content:center}
+  .now{width:230px;max-width:58%}
   .play-big{padding:16px 22px;gap:12px}
   .play-big .play-ico{width:48px;height:48px;font-size:22px}
   .play-big .play-txt b{font-size:19px}
@@ -181,6 +207,6 @@ h1{font-size:19px;font-weight:800;margin:2px 0 3px;letter-spacing:-.01em}
 }
 
 @media (prefers-reduced-motion: reduce){
-  .play-cta,.play-big{animation:none}
+  .play-cta,.play-big,.now .now-hd .dot{animation:none}
   .play-cta:hover,.play-big:hover{transform:none}
 }

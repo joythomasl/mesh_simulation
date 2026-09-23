@@ -22,8 +22,8 @@
     <span class="speed-lbl">Speed</span>
     <button type="button" id="btn-pause" class="tb" title="Pause / play">⏸</button>
     <button type="button" class="tb spd" data-s="1">1×</button>
-    <button type="button" class="tb spd" data-s="3">3×</button>
-    <button type="button" class="tb spd on" data-s="4">4×</button>
+    <button type="button" class="tb spd on" data-s="2">2×</button>
+    <button type="button" class="tb spd" data-s="4">4×</button>
     <button type="button" class="tb spd" data-s="10">10×</button>
     <span class="clock mono" id="clock">t = 0.0 s</span>
   </div>
@@ -45,6 +45,7 @@
     <div class="canvas-wrap">
       <canvas id="net" width="960" height="560" aria-label="Network simulation canvas"></canvas>
       <div class="tools" id="tools" hidden></div>
+      <div class="now" id="now" aria-live="polite"></div>
       <div class="hint" id="hint"></div>
       <div class="play-over" id="play-over">
         <button type="button" class="play-big" id="btn-play-over">

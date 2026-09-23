@@ -22,7 +22,7 @@ Interactive simulation of how phones can talk to each other when the network is 
 10. Urgent messages go first (and a broken phone can't hog the SOS lane)
 11. A group splits in two, then joins back (clashes are shown, not hidden)
 
-Each demo has controls to play with, live numbers, a log of what happened, and a step-by-step walkthrough. Press the big **Play simulation** button for a hands-off run (press again to pause, or step through with **Next**), or open a demo directly with `#name,auto` (for example `#ptt,auto`). Speed runs at 4x by default; 1x, 3x and 10x are in the top bar.
+Each demo has controls to play with, live numbers, a log of what happened, and a step-by-step walkthrough. Press the big **Play simulation** button for a hands-off run (press again to pause, or step through with **Next**), or open a demo directly with `#name,auto` (for example `#ptt,auto`). A **what's happening** panel in the top right of the picture shows the newest events as they occur, so following along needs no glance at the side log. Speed runs at 2x by default; 1x, 4x and 10x are in the top bar.
 
 ## Run locally
 

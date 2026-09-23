@@ -19,7 +19,7 @@
   const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
   // ---------------- Engine ----------------
-  const E = { nodes: [], links: [], packets: [], t: 0, speed: 4, paused: false, log: [], sc: null, C: {}, step: -1, timers: [] };
+  const E = { nodes: [], links: [], packets: [], t: 0, speed: 2, paused: false, log: [], sc: null, C: {}, step: -1, timers: [] };
   const byId = {};
   function node(id, x, y, kind, label, extra) { const n = Object.assign({ id, x, y, kind, label: label || id, alive: true, seen: new Set(), badge: "", ring: null, r: kind === "phone" ? 16 : 14 }, extra || {}); E.nodes.push(n); byId[id] = n; return n; }
   function link(a, b, kind, opts) { const l = Object.assign({ a, b, kind: kind || "wifi", delay: kind === "lora" ? 900 : kind === "sat" ? 30000 : kind === "net" ? 120 : 45, loss: 0, up: true }, opts || {}); E.links.push(l); return l; }
@@ -59,11 +59,19 @@
   function say(id, text, cls, ttl) { const n = byId[id]; if (!n) return; E.bubbles = E.bubbles.filter(b => b.node !== id); E.bubbles.push({ node: id, text, cls: cls || "", born: realNow(), ttl: BTTL(ttl) }); if (E.bubbles.length > 6) E.bubbles.shift(); }
   function sayAt(x, y, text, cls, ttl) { E.bubbles.push({ x, y, text, cls: cls || "", born: realNow(), ttl: BTTL(ttl) }); if (E.bubbles.length > 6) E.bubbles.shift(); }
   function wrapText(ctx, text, max) { const words = text.split(" "), lines = []; let cur = ""; words.forEach(w => { const t = cur ? cur + " " + w : w; if (ctx.measureText(t).width > max && cur) { lines.push(cur); cur = w; } else cur = t; }); if (cur) lines.push(cur); return lines; }
+  // Where the on-canvas panel sits, in canvas coordinates, so clouds can keep clear of it.
+  function nowRect() {
+    const el = $("now"); if (!el || !el.firstChild) return null;
+    const c = canvas.getBoundingClientRect(); if (!c.width || !c.height) return null;
+    const r = el.getBoundingClientRect(), sx = W / c.width, sy = H / c.height;
+    return { x: (r.left - c.left) * sx - 6, y: (r.top - c.top) * sy - 6, w: r.width * sx + 12, h: r.height * sy + 12 };
+  }
   function drawBubbles() {
     const rn = realNow(); E.bubbles = E.bubbles.filter(b => rn - b.born < b.ttl);
     if (!E.bubbles.length) return;
     const paper = css("--paper"), ink = css("--ink");
     const placed = [];                         // boxes already drawn, so two clouds never sit on top of each other
+    const np = nowRect();                      // measured once a frame, not once a cloud
     const pulse = .5 + .5 * Math.sin(rn / 260);
     E.bubbles.forEach((b, bi) => {
       const n = b.node ? byId[b.node] : null; if (b.node && !n) return;
@@ -78,6 +86,10 @@
       ctx.font = "800 12px Inter, sans-serif"; const hw = ctx.measureText(icon + "  " + head).width + 8;
       const w = Math.max(lw, hw) + 30, h = lines.length * 18 + 42;
       let bx = Math.max(6, Math.min(W - w - 6, x - w / 2)); let by = top - h - 14;
+      // never hide behind the "what's happening" panel: step aside, or drop below it
+      if (np && bx < np.x + np.w && bx + w > np.x && by < np.y + np.h && by + h > np.y) {
+        if (np.x - 8 - w >= 6) bx = np.x - 8 - w; else by = np.y + np.h + 10;
+      }
       for (let g = 0; g < 14; g++) { const hit = placed.find(r => bx < r.x + r.w + 8 && bx + w + 8 > r.x && by < r.y + r.h + 8 && by + h + 8 > r.y); if (!hit) break; by = hit.y - h - 10; }
       if (by < 6) by = 6;
       placed.push({ x: bx, y: by, w, h });
@@ -232,7 +244,18 @@
     if (!E.sc || !E.sc.metrics) return;
     $("metrics").innerHTML = E.sc.metrics().map(m => '<div class="metric' + (m.wide ? " wide" : "") + '"><b class="' + (m.cls || "") + '">' + m.value + "</b><span>" + m.label + "</span>" + (m.bar != null ? '<div class="bar"><i class="' + (m.barCls || "") + '" style="width:' + Math.max(0, Math.min(100, m.bar)) + '%"></i></div>' : "") + "</div>").join("");
   }
-  function renderLog() { $("log").innerHTML = E.log.slice(0, 90).map(e => '<div class="' + e.cls + '"><span class="t">' + fmtT(e.t) + "</span><span>" + e.msg + "</span></div>").join(""); $("log-cnt").textContent = E.log.length + " events"; }
+  // The same story as the side log, but on the picture itself: the newest lines,
+  // top right of the canvas, so following along needs no glance sideways.
+  function renderNow() {
+    const box = $("now"); if (!E.sc) { box.innerHTML = ""; return; }
+    const step = E.step < 0 ? "not started" : "step " + (E.step + 1) + " / " + E.sc.steps.length;
+    const evs = E.log.slice(0, 3);
+    box.innerHTML = '<div class="now-hd"><span class="lbl"><i class="dot"></i>What’s happening</span><span class="step">' + step + "</span></div>" +
+      (evs.length
+        ? evs.map((e, i) => '<div class="now-ev ' + e.cls + (i === 0 ? " new" : i > 1 ? " old" : "") + '"><span class="t">' + fmtT(e.t) + '</span><span class="m">' + e.msg + "</span></div>").join("")
+        : '<div class="now-empty">Press <b>Play simulation</b> — what each phone does appears here, line by line.</div>');
+  }
+  function renderLog() { renderNow(); $("log").innerHTML = E.log.slice(0, 90).map(e => '<div class="' + e.cls + '"><span class="t">' + fmtT(e.t) + "</span><span>" + e.msg + "</span></div>").join(""); $("log-cnt").textContent = E.log.length + " events"; }
   function renderControls() {
     const box = $("controls"); box.innerHTML = "";
     (E.sc.controls || []).forEach(c => {
@@ -286,7 +309,7 @@
     $("steps").innerHTML = E.sc.steps.map((s, i) => '<i class="' + (i < E.step ? "done" : i === E.step ? "cur" : "") + '"></i>').join("");
     $("narr").innerHTML = E.step < 0 ? E.sc.intro : E.sc.steps[E.step].text;
     $("btn-next").disabled = E.step >= E.sc.steps.length - 1; $("btn-next").textContent = E.step < 0 ? "Start →" : E.step >= E.sc.steps.length - 1 ? "Finished" : "Next →";
-    paintPlay();
+    paintPlay(); renderNow();
   }
   function nextStep() { if (E.step >= E.sc.steps.length - 1) return; E.step++; stepAt = performance.now(); const s = E.sc.steps[E.step]; if (s.run) s.run(); if (E.step >= E.sc.steps.length - 1) autoRun = false; renderSteps(); renderMetrics(); }
   function load(sc) {
