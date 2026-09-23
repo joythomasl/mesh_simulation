@@ -90,7 +90,34 @@ h1{font-size:19px;font-weight:800;margin:2px 0 3px;letter-spacing:-.01em}
 .narr-text{font-size:13px;line-height:1.45}
 .narr-text b{font-weight:700}
 .narr-actions{display:flex;align-items:center;gap:12px}
-.auto{font-size:12px;color:var(--ink-2);display:flex;align-items:center;gap:5px}
+
+/* The big "play" call to action — the one thing you cannot miss. */
+.play-cta{display:inline-flex;align-items:center;gap:12px;min-height:56px;padding:0 26px 0 20px;border:0;border-radius:32px;
+  background:linear-gradient(135deg,var(--gold),var(--gold-2));color:#fff;font-size:17px;font-weight:800;letter-spacing:.01em;
+  cursor:pointer;white-space:nowrap;box-shadow:0 6px 20px rgba(184,137,26,.45);animation:play-pulse 2.2s ease-in-out infinite}
+.play-cta:hover{transform:translateY(-1px);box-shadow:0 10px 26px rgba(184,137,26,.55)}
+.play-cta:active{transform:translateY(1px)}
+.play-cta .play-ico{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;
+  background:rgba(255,255,255,.22);font-size:15px;line-height:1}
+.play-cta.playing{animation:none;background:var(--raised);color:var(--ink);box-shadow:none;border:2px solid var(--gold)}
+.play-cta.playing .play-ico{background:var(--gold-soft);color:var(--gold-2)}
+@keyframes play-pulse{
+  0%,100%{box-shadow:0 6px 20px rgba(184,137,26,.45),0 0 0 0 rgba(184,137,26,.45)}
+  55%{box-shadow:0 6px 20px rgba(184,137,26,.45),0 0 0 14px rgba(184,137,26,0)}
+}
+
+/* Invitation floating over the picture until the story starts.
+   It never covers the canvas: the sandbox has to stay draggable underneath. */
+.play-over{position:absolute;left:0;right:0;bottom:46px;display:flex;justify-content:center;z-index:5;pointer-events:none}
+.play-over[hidden]{display:none}
+.play-big{pointer-events:auto;display:inline-flex;align-items:center;gap:18px;padding:16px 30px 16px 22px;border:0;border-radius:22px;
+  background:linear-gradient(135deg,var(--gold),var(--gold-2));color:#fff;cursor:pointer;text-align:left;
+  box-shadow:0 18px 50px rgba(16,24,40,.35);animation:play-pulse 2.2s ease-in-out infinite}
+.play-big:hover{transform:translateY(-2px)}
+.play-big .play-ico{display:inline-flex;align-items:center;justify-content:center;width:64px;height:64px;border-radius:50%;
+  background:rgba(255,255,255,.22);font-size:28px;line-height:1;padding-left:4px}
+.play-big .play-txt b{display:block;font-size:24px;font-weight:800;letter-spacing:-.01em}
+.play-big .play-txt small{display:block;font-size:13px;font-weight:600;opacity:.9;margin-top:3px}
 
 .btn{min-height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--line);background:var(--raised);font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap}
 .btn:hover{border-color:var(--ink-3)}
@@ -146,5 +173,14 @@ h1{font-size:19px;font-weight:800;margin:2px 0 3px;letter-spacing:-.01em}
   .side{border-left:0;border-top:1px solid var(--line)}
   .log{height:200px}
   .narration{grid-template-columns:1fr}
+  .play-cta{width:100%;justify-content:center}
+  .play-big{padding:16px 22px;gap:12px}
+  .play-big .play-ico{width:48px;height:48px;font-size:22px}
+  .play-big .play-txt b{font-size:19px}
   .top .clock{display:none}
+}
+
+@media (prefers-reduced-motion: reduce){
+  .play-cta,.play-big{animation:none}
+  .play-cta:hover,.play-big:hover{transform:none}
 }

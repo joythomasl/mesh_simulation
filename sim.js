@@ -19,7 +19,7 @@
   const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
   // ---------------- Engine ----------------
-  const E = { nodes: [], links: [], packets: [], t: 0, speed: 3, paused: false, log: [], sc: null, C: {}, step: -1, timers: [] };
+  const E = { nodes: [], links: [], packets: [], t: 0, speed: 4, paused: false, log: [], sc: null, C: {}, step: -1, timers: [] };
   const byId = {};
   function node(id, x, y, kind, label, extra) { const n = Object.assign({ id, x, y, kind, label: label || id, alive: true, seen: new Set(), badge: "", ring: null, r: kind === "phone" ? 16 : 14 }, extra || {}); E.nodes.push(n); byId[id] = n; return n; }
   function link(a, b, kind, opts) { const l = Object.assign({ a, b, kind: kind || "wifi", delay: kind === "lora" ? 900 : kind === "sat" ? 30000 : kind === "net" ? 120 : 45, loss: 0, up: true }, opts || {}); E.links.push(l); return l; }
@@ -51,33 +51,55 @@
   // Speech bubbles: a short line above the node it concerns, so the story
   // can be followed on the picture itself (not only in the log).
   E.bubbles = [];
-  // Bubble lifetimes are in real seconds (not simulated), so they stay readable at 20× too.
+  // Bubble lifetimes are in real seconds (not simulated), so they stay readable at 10× too.
   const realNow = () => performance.now();
-  function say(id, text, cls, ttl) { const n = byId[id]; if (!n) return; E.bubbles = E.bubbles.filter(b => b.node !== id); E.bubbles.push({ node: id, text, cls: cls || "", born: realNow(), ttl: ttl || 4200 }); if (E.bubbles.length > 10) E.bubbles.shift(); }
-  function sayAt(x, y, text, cls, ttl) { E.bubbles.push({ x, y, text, cls: cls || "", born: realNow(), ttl: ttl || 4200 }); if (E.bubbles.length > 10) E.bubbles.shift(); }
+  // Nothing stays up for less than ~2.6 s of real time, whatever the caller asks for: a line
+  // nobody can finish reading is worse than no line at all. Six on screen at once, at most.
+  const BTTL = ttl => Math.max(2600, ttl || 5200);
+  function say(id, text, cls, ttl) { const n = byId[id]; if (!n) return; E.bubbles = E.bubbles.filter(b => b.node !== id); E.bubbles.push({ node: id, text, cls: cls || "", born: realNow(), ttl: BTTL(ttl) }); if (E.bubbles.length > 6) E.bubbles.shift(); }
+  function sayAt(x, y, text, cls, ttl) { E.bubbles.push({ x, y, text, cls: cls || "", born: realNow(), ttl: BTTL(ttl) }); if (E.bubbles.length > 6) E.bubbles.shift(); }
   function wrapText(ctx, text, max) { const words = text.split(" "), lines = []; let cur = ""; words.forEach(w => { const t = cur ? cur + " " + w : w; if (ctx.measureText(t).width > max && cur) { lines.push(cur); cur = w; } else cur = t; }); if (cur) lines.push(cur); return lines; }
   function drawBubbles() {
     const rn = realNow(); E.bubbles = E.bubbles.filter(b => rn - b.born < b.ttl);
+    if (!E.bubbles.length) return;
     const paper = css("--paper"), ink = css("--ink");
-    E.bubbles.forEach(b => {
+    const placed = [];                         // boxes already drawn, so two clouds never sit on top of each other
+    const pulse = .5 + .5 * Math.sin(rn / 260);
+    E.bubbles.forEach((b, bi) => {
       const n = b.node ? byId[b.node] : null; if (b.node && !n) return;
       const x = n ? n.x : b.x, top = n ? n.y - n.r - (n.badge ? 30 : 12) : b.y;
-      const age = rn - b.born; const alpha = age > b.ttl - 500 ? (b.ttl - age) / 500 : Math.min(1, age / 150);
+      const age = rn - b.born; const alpha = age > b.ttl - 600 ? (b.ttl - age) / 600 : Math.min(1, age / 150);
       const pop = Math.min(1, age / 180); const scale = 0.85 + 0.15 * (1 - Math.pow(1 - pop, 3));
-      ctx.save(); ctx.globalAlpha = Math.max(0, alpha);
+      const fresh = bi === E.bubbles.length - 1 && age < 1600;   // the newest line gets an extra nudge
       const col = b.cls === "bad" ? css("--red") : b.cls === "warn" ? css("--amber") : b.cls === "ok" ? css("--green") : b.cls === "info" ? css("--blue") : css("--gold");
       const icon = b.cls === "bad" ? "✕" : b.cls === "warn" ? "⚠" : b.cls === "ok" ? "✓" : b.cls === "info" ? "→" : "●";
       const head = n ? n.label.split(" ·")[0] : "wall";
-      ctx.font = "500 12px Inter, sans-serif"; const lines = wrapText(ctx, b.text, 240); const lw = Math.max(...lines.map(l => ctx.measureText(l).width));
-      ctx.font = "700 11px Inter, sans-serif"; const hw = ctx.measureText(icon + "  " + head).width;
-      const w = Math.max(lw, hw) + 24, h = lines.length * 16 + 34; let bx = x - w / 2; bx = Math.max(6, Math.min(W - w - 6, bx)); const by = top - h - 10;
+      ctx.font = "600 14px Inter, sans-serif"; const lines = wrapText(ctx, b.text, 280); const lw = Math.max(...lines.map(l => ctx.measureText(l).width));
+      ctx.font = "800 12px Inter, sans-serif"; const hw = ctx.measureText(icon + "  " + head).width + 8;
+      const w = Math.max(lw, hw) + 30, h = lines.length * 18 + 42;
+      let bx = Math.max(6, Math.min(W - w - 6, x - w / 2)); let by = top - h - 14;
+      for (let g = 0; g < 14; g++) { const hit = placed.find(r => bx < r.x + r.w + 8 && bx + w + 8 > r.x && by < r.y + r.h + 8 && by + h + 8 > r.y); if (!hit) break; by = hit.y - h - 10; }
+      if (by < 6) by = 6;
+      placed.push({ x: bx, y: by, w, h });
+
+      ctx.save(); ctx.globalAlpha = Math.max(0, alpha);
+      // a halo on the node the line is about, so eye and text are tied together
+      if (n) { ctx.save(); ctx.globalAlpha = Math.max(0, alpha) * (fresh ? .30 + .30 * pulse : .22); ctx.strokeStyle = col; ctx.lineWidth = fresh ? 3.5 : 2.5; ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 8 + (fresh ? 3 * pulse : 0), 0, 7); ctx.stroke(); ctx.restore(); }
       ctx.translate(x, by + h); ctx.scale(scale, scale); ctx.translate(-x, -(by + h));
-      ctx.shadowColor = "rgba(0,0,0,.35)"; ctx.shadowBlur = 14; ctx.shadowOffsetY = 3; ctx.fillStyle = paper; ctx.beginPath(); ctx.roundRect(bx, by, w, h, 10); ctx.fill(); ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
-      ctx.beginPath(); ctx.moveTo(x - 7, by + h - 1); ctx.lineTo(x, by + h + 8); ctx.lineTo(x + 7, by + h - 1); ctx.closePath(); ctx.fill();
-      ctx.strokeStyle = col; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.roundRect(bx, by, w, h, 10); ctx.stroke();
-      ctx.fillStyle = col; ctx.globalAlpha *= .16; ctx.beginPath(); ctx.roundRect(bx, by, w, 22, [10, 10, 0, 0]); ctx.fill(); ctx.globalAlpha = Math.max(0, alpha);
-      ctx.fillStyle = col; ctx.font = "700 11px Inter, sans-serif"; ctx.textAlign = "left"; ctx.fillText(icon + "  " + head, bx + 12, by + 15);
-      ctx.fillStyle = ink; ctx.font = "500 12px Inter, sans-serif"; lines.forEach((l, i) => ctx.fillText(l, bx + 12, by + 40 + i * 16));
+      // leader line down to the node when the cloud had to move up out of the way
+      if (n && by + h < top - 18) { ctx.save(); ctx.globalAlpha = Math.max(0, alpha) * .5; ctx.strokeStyle = col; ctx.lineWidth = 1.6; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(x, by + h); ctx.lineTo(x, top - 4); ctx.stroke(); ctx.restore(); }
+      // body: solid paper, a coloured glow and a real drop shadow — readable over links and clutter
+      ctx.shadowColor = col; ctx.shadowBlur = fresh ? 22 : 14; ctx.fillStyle = paper; ctx.beginPath(); ctx.roundRect(bx, by, w, h, 12); ctx.fill();
+      ctx.shadowColor = "rgba(0,0,0,.40)"; ctx.shadowBlur = 16; ctx.shadowOffsetY = 4; ctx.fill(); ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+      ctx.beginPath(); ctx.moveTo(x - 8, by + h - 1); ctx.lineTo(x, by + h + 10); ctx.lineTo(x + 8, by + h - 1); ctx.closePath(); ctx.fill();
+      // coloured header band + border
+      ctx.save(); ctx.beginPath(); ctx.roundRect(bx, by, w, h, 12); ctx.clip();
+      ctx.fillStyle = col; ctx.globalAlpha = Math.max(0, alpha) * .20; ctx.fillRect(bx, by, w, 26);
+      ctx.globalAlpha = Math.max(0, alpha); ctx.fillRect(bx, by, 5, h);          // accent edge
+      ctx.restore();
+      ctx.strokeStyle = col; ctx.lineWidth = fresh ? 2.6 : 2; ctx.beginPath(); ctx.roundRect(bx, by, w, h, 12); ctx.stroke();
+      ctx.fillStyle = col; ctx.font = "800 12px Inter, sans-serif"; ctx.textAlign = "left"; ctx.fillText(icon + "  " + head, bx + 14, by + 17);
+      ctx.fillStyle = ink; ctx.font = "600 14px Inter, sans-serif"; lines.forEach((l, i) => ctx.fillText(l, bx + 14, by + 46 + i * 18));
       ctx.restore();
     });
   }
@@ -242,14 +264,33 @@
     canvas.style.cursor = UI.tool === "move" ? "grab" : UI.tool === "wall" ? "crosshair" : UI.tool === "delete" ? "not-allowed" : "copy";
   }
   let autoRun = false, stepAt = 0;
+  // The big play button: one press and the whole story runs by itself.
+  function paintPlay() {
+    const done = E.sc && E.step >= E.sc.steps.length - 1;
+    const b = $("btn-play"), ico = b.querySelector(".play-ico"), lbl = b.querySelector(".play-lbl");
+    b.classList.toggle("playing", autoRun);
+    ico.textContent = autoRun ? "⏸" : done ? "↻" : "▶";
+    lbl.textContent = autoRun ? "Pause" : done ? "Play again" : E.step < 0 ? "Play simulation" : "Keep playing";
+    $("play-over").hidden = autoRun || E.step >= 0;
+  }
+  function setPlay(on) {
+    if (on) {
+      if (E.paused) { E.paused = false; $("btn-pause").textContent = "⏸"; $("btn-pause").classList.remove("on"); }
+      if (E.sc && E.step >= E.sc.steps.length - 1) load(E.sc);   // finished → play it again from the top
+    }
+    autoRun = on;                                                // after load(), which clears it
+    if (on) { if (E.step < 0) nextStep(); else stepAt = performance.now(); }
+    paintPlay();
+  }
   function renderSteps() {
     $("steps").innerHTML = E.sc.steps.map((s, i) => '<i class="' + (i < E.step ? "done" : i === E.step ? "cur" : "") + '"></i>').join("");
     $("narr").innerHTML = E.step < 0 ? E.sc.intro : E.sc.steps[E.step].text;
     $("btn-next").disabled = E.step >= E.sc.steps.length - 1; $("btn-next").textContent = E.step < 0 ? "Start →" : E.step >= E.sc.steps.length - 1 ? "Finished" : "Next →";
+    paintPlay();
   }
-  function nextStep() { if (E.step >= E.sc.steps.length - 1) return; E.step++; stepAt = performance.now(); const s = E.sc.steps[E.step]; if (s.run) s.run(); renderSteps(); renderMetrics(); }
+  function nextStep() { if (E.step >= E.sc.steps.length - 1) return; E.step++; stepAt = performance.now(); const s = E.sc.steps[E.step]; if (s.run) s.run(); if (E.step >= E.sc.steps.length - 1) autoRun = false; renderSteps(); renderMetrics(); }
   function load(sc) {
-    E.nodes.length = 0; E.links.length = 0; E.packets.length = 0; E.log.length = 0; E.timers.length = 0; E.bubbles.length = 0; E.t = 0; E.stats = {}; E.C = {}; E.step = -1; stepAt = 0;
+    E.nodes.length = 0; E.links.length = 0; E.packets.length = 0; E.log.length = 0; E.timers.length = 0; E.bubbles.length = 0; E.t = 0; E.stats = {}; E.C = {}; E.step = -1; stepAt = 0; autoRun = false;
     for (const k in byId) delete byId[k];
     E.sc = sc; hint(sc.hint || "");
     $("sc-tier").textContent = sc.tier; $("sc-title").textContent = sc.title; $("sc-blurb").textContent = sc.blurb;
@@ -957,7 +998,8 @@
   canvas.addEventListener("pointerleave", () => { UI.hover = null; });
   $("btn-next").addEventListener("click", nextStep);
   $("btn-reset").addEventListener("click", () => load(E.sc));
-  $("auto-run").addEventListener("change", ev => { autoRun = ev.target.checked; if (autoRun && E.step < 0) nextStep(); });
+  $("btn-play").addEventListener("click", () => setPlay(!autoRun));
+  $("btn-play-over").addEventListener("click", () => setPlay(true));
   $("btn-pause").addEventListener("click", () => { E.paused = !E.paused; $("btn-pause").textContent = E.paused ? "▶" : "⏸"; $("btn-pause").classList.toggle("on", E.paused); });
   document.querySelectorAll(".spd").forEach(b => b.addEventListener("click", () => { E.speed = +b.dataset.s; document.querySelectorAll(".spd").forEach(x => x.classList.toggle("on", x === b)); }));
   (function theme() { const btn = $("theme-toggle"); function paint() { const dark = document.documentElement.getAttribute("data-theme") === "dark"; btn.innerHTML = '<span aria-hidden="true">' + (dark ? "☀" : "☾") + "</span>" + (dark ? "Light" : "Dark"); } btn.addEventListener("click", () => { const t = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark"; document.documentElement.setAttribute("data-theme", t); try { localStorage.setItem("rl_theme", t); } catch (e) {} paint(); }); paint(); })();
@@ -965,6 +1007,6 @@
   buildList();
   // #scenario opens a scenario; #scenario,auto also starts auto-run (kiosk / demo use)
   const hash = (location.hash || "").slice(1).split(","); load(S.find(s => s.id === hash[0]) || S[0]);
-  if (hash[1] === "auto") { $("auto-run").checked = true; autoRun = true; nextStep(); }
+  if (hash[1] === "auto") setPlay(true); else paintPlay();
   frame(performance.now());
 })();
